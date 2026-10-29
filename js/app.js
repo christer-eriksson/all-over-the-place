@@ -4,6 +4,7 @@ window.RAA = window.RAA || {};
   'use strict';
 
   const SNAP_M = 30;
+  const BARRIER_M = 25;
   const STORE_KEY = 'raa:state:v1';
 
   const state = {
@@ -11,7 +12,9 @@ window.RAA = window.RAA || {};
     elements: null,        // raw Overpass elements (cached, re-filtered client side)
     graph: { edges: [], nodePos: new Map() },
     customPaths: [],       // [{id, latlngs:[{lat,lng}]}]
-    excludedKeys: new Set(),
+    excludedKeys: new Set(), // blocked streets: never run
+    avoidKeys: new Set(),    // avoided streets: run once if needed, never repeated as a connector
+    barriers: [],            // [{id, lat, lng}] spots where a street is impassable
     includeDeadEnds: true,
     filters: { service: true, trails: true, sidewalks: false, steps: false },
     start: null,           // {lat,lng}
@@ -63,6 +66,7 @@ window.RAA = window.RAA || {};
   const areaLayer = L.layerGroup().addTo(map);
   const edgeLayer = L.layerGroup().addTo(map);
   const routeLayer = L.layerGroup().addTo(map);
+  const barrierLayer = L.layerGroup().addTo(map);
   let startMarker = null;
 
   // ---------- Mouse drawing (rectangle / polygon / polyline) ----------
@@ -169,6 +173,7 @@ window.RAA = window.RAA || {};
       const c = map.getCenter();
       localStorage.setItem(STORE_KEY, JSON.stringify({
         area: state.area, customPaths: state.customPaths, excludedKeys: [...state.excludedKeys],
+        avoidKeys: [...state.avoidKeys], barriers: state.barriers,
         includeDeadEnds: state.includeDeadEnds, filters: state.filters, start: state.start, pace: state.pace,
         view: { lat: c.lat, lng: c.lng, zoom: map.getZoom() },
       }));
@@ -182,6 +187,8 @@ window.RAA = window.RAA || {};
       state.area = s.area || null;
       state.customPaths = s.customPaths || [];
       state.excludedKeys = new Set(s.excludedKeys || []);
+      state.avoidKeys = new Set(s.avoidKeys || []);
+      state.barriers = s.barriers || [];
       state.includeDeadEnds = s.includeDeadEnds !== false;
       Object.assign(state.filters, s.filters || {});
       state.start = s.start || null;
@@ -209,14 +216,22 @@ window.RAA = window.RAA || {};
     const g = RAA.osm.buildGraph(state.elements, state.area, state.filters);
     state.graph = g;
     for (const cp of state.customPaths) RAA.osm.addCustomPath(g, cp, SNAP_M);
-    for (const e of g.edges) e.excluded = state.excludedKeys.has(e.key) || (e.origKey != null && state.excludedKeys.has(e.origKey));
+    g.joins = [];
+    for (const b of state.barriers) {
+      const pair = RAA.osm.cutAt(g, b, BARRIER_M, b.id);
+      b.missed = !pair;
+      if (pair) g.joins.push(pair);
+    }
+    const has = (set, e) => set.has(e.key) || (e.origKey != null && set.has(e.origKey));
+    for (const e of g.edges) { e.excluded = has(state.excludedKeys, e); e.avoid = !e.excluded && has(state.avoidKeys, e); }
+    drawBarriers();
     refresh();
   }
 
   function refresh() {
     const { edges } = state.graph;
     RAA.graph.markDeadEnds(edges);
-    const comp = RAA.graph.markComponents(edges, state.includeDeadEnds);
+    const comp = RAA.graph.markComponents(edges, state.includeDeadEnds, state.graph.joins);
     clearRoute();
     drawEdges();
     updateNetworkStats(comp);
@@ -224,47 +239,138 @@ window.RAA = window.RAA || {};
   }
 
   function styleFor(e) {
-    if (e.custom) return { color: '#e879f9', weight: 4, opacity: 0.95 };
     if (e.excluded) return { color: '#ff3b5c', weight: 3, opacity: 0.9, dashArray: '6 6' };
+    if (e.cutOff) return { color: '#ff3b5c', weight: 2, opacity: 0.4, dashArray: '2 6' };
     if (e.deadEnd && !state.includeDeadEnds) return { color: '#6b7280', weight: 3, opacity: 0.75, dashArray: '2 8' };
     if (e.isolated) return { color: '#64748b', weight: 2, opacity: 0.5, dashArray: '1 6' };
+    if (e.avoid) return { color: '#f59e0b', weight: 4, opacity: 0.95, dashArray: '12 4 2 4' };
+    if (e.custom) return { color: '#e879f9', weight: 4, opacity: 0.95 };
     if (e.deadEnd) return { color: '#38bdf8', weight: 3, opacity: 0.9, dashArray: '10 5' };
     return { color: '#38bdf8', weight: 3, opacity: 0.9 };
+  }
+
+  function edgeLabel(e) {
+    const tags = [];
+    if (e.custom) tags.push('my path');
+    if (e.excluded) tags.push('blocked');
+    else if (e.cutOff) tags.push('cut off by a block');
+    else if (e.isolated) tags.push('disconnected');
+    if (e.avoid) tags.push('avoid repeats');
+    if (e.deadEnd) tags.push('dead end');
+    return `${escapeHtml(e.name)} · ${fmtM(e.len)}${tags.length ? ' · ' + tags.join(' · ') : ''}`;
   }
 
   function drawEdges() {
     edgeLayer.clearLayers();
     for (const e of state.graph.edges) {
       const line = L.polyline(e.coords, Object.assign({ renderer: canvas, interactive: true }, styleFor(e)));
-      line.bindTooltip(() => `${e.name} · ${fmtM(e.len)}${e.deadEnd ? ' · dead end' : ''}${e.excluded ? ' · excluded' : ''}${e.isolated ? ' · disconnected' : ''}`, { sticky: true, className: 'edge-tip' });
+      line.bindTooltip(() => edgeLabel(e), { sticky: true, className: 'edge-tip' });
       line.on('mouseover', () => line.setStyle({ weight: styleFor(e).weight + 3 }));
       line.on('mouseout', () => line.setStyle({ weight: styleFor(e).weight }));
-      line.on('click', ev => { if (drawer.busy) return; L.DomEvent.stop(ev); onEdgeClick(e, ev.latlng); });
+      line.on('click', ev => { if (drawer.busy) return; L.DomEvent.stop(ev); onEdgeClick(e, ev.latlng, ev.originalEvent); });
       e.layer = line;
       line.addTo(edgeLayer);
     }
   }
 
-  function onEdgeClick(e, latlng) {
-    if (drawer.busy) return;
-    if (state.mode === 'start') { setStart(latlng || e.coords[0]); return; }
-    if (e.custom) {
-      state.customPaths = state.customPaths.filter(cp => cp.id !== e.customId);
-      toast('Custom path removed');
-      rebuild();
-      return;
-    }
-    e.excluded = !e.excluded;
-    if (e.excluded) state.excludedKeys.add(e.key);
-    else {
-      state.excludedKeys.delete(e.key);
-      // piece of a street that was excluded before a custom path split it: drop the parent key, keep the other pieces out
-      if (e.origKey != null && state.excludedKeys.delete(e.origKey)) {
-        for (const o of state.graph.edges) if (o !== e && o.origKey === e.origKey && o.excluded) state.excludedKeys.add(o.key);
+  const stateOf = e => e.excluded ? 'block' : e.avoid ? 'avoid' : 'run';
+
+  /** Set a street piece to 'run' | 'avoid' | 'block', keeping pieces of split streets consistent. */
+  function setEdgeState(e, st) {
+    for (const set of [state.excludedKeys, state.avoidKeys]) {
+      set.delete(e.key);
+      // the whole unsplit street had this state: keep it on the other pieces, change only this one
+      if (e.origKey != null && set.delete(e.origKey)) {
+        for (const o of state.graph.edges) if (o !== e && (o.origKey === e.origKey || o.key === e.origKey)) set.add(o.key);
       }
     }
-    toast(e.excluded ? `Excluded ${e.name}` : `Back in: ${e.name}`);
-    refresh();
+    if (st === 'block') state.excludedKeys.add(e.key);
+    if (st === 'avoid') state.avoidKeys.add(e.key);
+    e.excluded = st === 'block';
+    e.avoid = st === 'avoid';
+  }
+
+  function onEdgeClick(e, latlng, domEvent) {
+    if (drawer.busy) return;
+    if (state.mode === 'start') { setStart(latlng || e.coords[0]); return; }
+    if (state.mode === 'cut') { addBarrier(latlng); return; }
+    if (domEvent && (domEvent.shiftKey || domEvent.altKey)) {   // quick toggle, old one-click behaviour
+      setEdgeState(e, e.excluded ? 'run' : 'block');
+      toast(e.excluded ? `Blocked ${e.name}` : `Back in: ${e.name}`);
+      refresh();
+      return;
+    }
+    openEdgeMenu(e, latlng || L.latLng(e.coords[0]));
+  }
+
+  function openEdgeMenu(e, latlng) {
+    const cur = stateOf(e);
+    const el = document.createElement('div');
+    el.className = 'edge-menu';
+    const deadNote = e.deadEnd && !e.excluded ? '<p class="menu-note">Blocking a dead end drops everything beyond it too.</p>' : '';
+    el.innerHTML = `<div class="menu-title">${edgeLabel(e)}</div>
+      <div class="menu-row">
+        <button data-st="run" class="${cur === 'run' ? 'on' : ''}" title="Cover it normally">✓ Run it</button>
+        <button data-st="avoid" class="${cur === 'avoid' ? 'on' : ''}" title="Cover it once if needed, but never run it twice">⚠ Avoid</button>
+        <button data-st="block" class="${cur === 'block' ? 'on' : ''}" title="Never run it">⛔ Block</button>
+      </div>
+      <div class="menu-row">
+        <button data-act="cut" title="Make the street impassable at the spot you clicked">✂ Cut here</button>
+        ${e.custom ? '<button data-act="remove" title="Delete this custom path">🗑 Remove path</button>' : ''}
+      </div>${deadNote}`;
+    const popup = L.popup({ className: 'menu-popup', closeButton: true, autoPan: true, maxWidth: 300 }).setLatLng(latlng).setContent(el).openOn(map);
+    el.addEventListener('click', ev => {
+      const b = ev.target.closest('button');
+      if (!b) return;
+      map.closePopup(popup);
+      if (b.dataset.st) {
+        if (b.dataset.st === cur) return;
+        setEdgeState(e, b.dataset.st);
+        toast({ run: `Back in: ${e.name}`, avoid: `Avoiding repeats on ${e.name}`, block: `Blocked ${e.name}` }[b.dataset.st]);
+        refresh();
+      } else if (b.dataset.act === 'cut') addBarrier(latlng);
+      else if (b.dataset.act === 'remove') {
+        state.customPaths = state.customPaths.filter(cp => cp.id !== e.customId);
+        toast('Custom path removed');
+        rebuild();
+      }
+    });
+  }
+
+  // ---------- Barriers ----------
+  function addBarrier(latlng) {
+    if (!state.elements) { toast('Load the streets first', 'warn'); return; }
+    const b = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), lat: latlng.lat, lng: latlng.lng };
+    state.barriers.push(b);
+    setMode('exclude');
+    rebuild();
+    if (b.missed) {
+      state.barriers = state.barriers.filter(x => x !== b);
+      rebuild();
+      toast('No street close enough to cut there', 'warn');
+      return;
+    }
+    toast('Passage cut. Click either side to block it, or click the ⛔ to remove the cut.', 'ok');
+  }
+
+  function removeBarrier(id) {
+    state.barriers = state.barriers.filter(b => b.id !== id);
+    rebuild();
+    toast('Cut removed');
+  }
+
+  function drawBarriers() {
+    barrierLayer.clearLayers();
+    for (const b of state.barriers) {
+      if (b.missed) continue;
+      const m = L.marker([b.lat, b.lng], {
+        icon: L.divIcon({ className: 'barrier-pin', html: '<span>⛔</span>', iconSize: [22, 22], iconAnchor: [11, 11] }),
+        zIndexOffset: 500,
+      });
+      m.bindTooltip('Impassable here · click to remove', { direction: 'top', offset: [0, -10] });
+      m.on('click', ev => { L.DomEvent.stop(ev); if (!drawer.busy) removeBarrier(b.id); });
+      m.addTo(barrierLayer);
+    }
   }
 
   function updateNetworkStats(comp) {
@@ -277,12 +383,18 @@ window.RAA = window.RAA || {};
     $('net-km').textContent = fmtKm(total);
     $('net-dead').textContent = `${deadEnds.length} · ${fmtKm(deadLen)}`;
     $('net-excluded').textContent = edges.filter(e => e.excluded).length;
+    $('net-avoid').textContent = edges.filter(e => e.avoid && !e.excluded).length;
     $('net-custom').textContent = state.customPaths.length;
     const warn = $('net-warn');
     if (comp && comp.components > 1) {
       warn.textContent = `${comp.components - 1} disconnected piece(s) (${fmtKm(comp.droppedLen)}) are greyed out and will be skipped. Connect them with a custom path or extend the area.`;
       warn.hidden = false;
     } else warn.hidden = true;
+    const cut = $('net-cut');
+    if (comp && comp.cutLen > 0) {
+      cut.textContent = `${fmtKm(comp.cutLen)} of streets is cut off by your blocks and cuts (faded red) and will be skipped.`;
+      cut.hidden = false;
+    } else cut.hidden = true;
     $('btn-route').disabled = active.length === 0;
     $('step-tune').classList.toggle('ready', edges.length > 0);
     $('step-route').classList.toggle('ready', edges.length > 0);
@@ -309,7 +421,8 @@ window.RAA = window.RAA || {};
     state.mode = mode;
     document.body.dataset.mode = mode;
     $('btn-start').classList.toggle('active', mode === 'start');
-    map.getContainer().classList.toggle('pick', mode === 'start');
+    $('btn-cut').classList.toggle('active', mode === 'cut');
+    map.getContainer().classList.toggle('pick', mode === 'start' || mode === 'cut');
   }
 
   // ---------- Route ----------
@@ -422,7 +535,7 @@ window.RAA = window.RAA || {};
   function wire() {
     $('btn-rect').onclick = () => { setMode('exclude'); toast('Drag a rectangle on the map'); drawer.start('rect', ring => { setArea(ring); }); };
     $('btn-poly').onclick = () => { setMode('exclude'); toast('Click corners, double-click or Enter to finish'); drawer.start('poly', ring => { setArea(ring); }); };
-    $('btn-clear-area').onclick = () => { drawer.cancel(); state.customPaths = []; state.excludedKeys.clear(); setStart(null); setArea(null); state.elements = null; state.graph = { edges: [], nodePos: new Map() }; edgeLayer.clearLayers(); clearRoute(); $('fetch-status').textContent = ''; updateNetworkStats(null); };
+    $('btn-clear-area').onclick = () => { drawer.cancel(); state.customPaths = []; state.excludedKeys.clear(); state.avoidKeys.clear(); state.barriers = []; barrierLayer.clearLayers(); setStart(null); setArea(null); state.elements = null; state.graph = { edges: [], nodePos: new Map() }; edgeLayer.clearLayers(); clearRoute(); $('fetch-status').textContent = ''; updateNetworkStats(null); };
     $('btn-fetch').onclick = fetchStreets;
 
     for (const k of Object.keys(state.filters)) {
@@ -451,9 +564,23 @@ window.RAA = window.RAA || {};
       });
     };
     $('btn-clear-paths').onclick = () => { if (!state.customPaths.length) return; state.customPaths = []; rebuild(); toast('All custom paths removed'); };
-    $('btn-reset-excl').onclick = () => { state.excludedKeys.clear(); for (const e of state.graph.edges) e.excluded = false; refresh(); toast('All streets back in'); };
+    $('btn-reset-excl').onclick = () => {
+      state.excludedKeys.clear(); state.avoidKeys.clear(); state.barriers = [];
+      if (state.elements) rebuild(); else { barrierLayer.clearLayers(); save(); }
+      toast('All blocks, avoids and cuts removed');
+    };
+    $('btn-cut').onclick = () => {
+      if (state.mode === 'cut') { setMode('exclude'); return; }
+      if (!state.elements) { toast('Load the streets first', 'warn'); return; }
+      setMode('cut');
+      toast('Click the exact spot on a street where it can\'t be passed');
+    };
     $('btn-start').onclick = () => { if (state.mode === 'start') setMode('exclude'); else { setMode('start'); toast('Click on the map where you want to start'); } };
-    map.on('click', e => { if (state.mode === 'start' && !drawer.busy) setStart(e.latlng); });
+    map.on('click', e => {
+      if (drawer.busy) return;
+      if (state.mode === 'start') setStart(e.latlng);
+      else if (state.mode === 'cut') addBarrier(e.latlng);
+    });
     $('btn-clear-start').onclick = () => { setStart(null); };
 
     $('btn-route').onclick = computeRoute;
@@ -507,6 +634,7 @@ window.RAA = window.RAA || {};
         navigator.geolocation.getCurrentPosition(p => map.setView([p.coords.latitude, p.coords.longitude], 14), () => {}, { timeout: 4000 });
       }
     }
+    drawBarriers();
     updateNetworkStats(null);
   }
 

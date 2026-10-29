@@ -66,6 +66,7 @@ body.panel-collapsed .panel { margin-left: calc(var(--panel-w) * -1); }
 .step h2 { font-family: var(--display); font-size: 24px; letter-spacing: 1px; margin: 0; font-weight: 400; }
 .hint { font-size: 13px; color: var(--muted); margin: 0 0 10px; line-height: 1.4; }
 .small { font-size: 12px; } .muted { color: var(--muted); }
+.note { font-size: 12px; color: #fca5b5; background: rgba(255,59,92,.08); border: 1px solid rgba(255,59,92,.35); border-radius: 8px; padding: 8px; margin: 10px 0 0; }
 .warn { font-size: 12px; color: var(--orange); background: rgba(255,140,66,.1); border: 1px solid rgba(255,140,66,.4); border-radius: 8px; padding: 8px; margin: 10px 0 0; }
 
 .btn-row { display: flex; gap: 8px; margin-bottom: 8px; }
@@ -178,3 +179,17 @@ kbd { background: var(--panel); border: 1px solid var(--line); border-radius: 4p
   .tagline, .pace small { display: none; }
   .brand h1 { font-size: 26px; }
 }
+
+/* ---------- street menu + barriers ---------- */
+.menu-popup .leaflet-popup-content-wrapper, .menu-popup .leaflet-popup-tip { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+.menu-popup .leaflet-popup-content { margin: 12px 14px; }
+.menu-popup a.leaflet-popup-close-button { color: var(--muted); }
+.edge-menu .menu-title { font-size: 12px; color: var(--muted); margin: 0 14px 8px 0; line-height: 1.4; }
+.edge-menu .menu-row { display: flex; gap: 6px; margin-bottom: 6px; }
+.edge-menu button { flex: 1; font: 600 12px var(--font); padding: 7px 8px; border-radius: 7px; cursor: pointer; background: #1f2a44; color: var(--text); border: 1px solid #2f3d5e; white-space: nowrap; }
+.edge-menu button:hover { border-color: var(--lime); }
+.edge-menu button[data-st="run"].on { background: var(--sky); color: #0b0f1a; border-color: var(--sky); }
+.edge-menu button[data-st="avoid"].on { background: #f59e0b; color: #0b0f1a; border-color: #f59e0b; }
+.edge-menu button[data-st="block"].on { background: var(--red); color: #fff; border-color: var(--red); }
+.edge-menu .menu-note { font-size: 11px; color: var(--muted); margin: 4px 0 0; }
+.barrier-pin span { font-size: 18px; display: block; text-align: center; line-height: 22px; filter: drop-shadow(0 0 4px rgba(255,59,92,.9)); cursor: pointer; }

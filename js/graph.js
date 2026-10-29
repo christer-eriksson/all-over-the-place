@@ -74,24 +74,46 @@ window.RAA = window.RAA || {};
     }
   }
 
-  /** Keep only the largest connected piece (by length). Sets e.isolated on the rest. */
-  function markComponents(edges, includeDeadEnds) {
+  /** Largest connected piece (by length) of the given edges. Returns {find, best, lenByRoot}. */
+  function components(list, joins) {
     const parent = new Map();
     const find = x => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
-    const union = (x, y) => { x = find(x); y = find(y); if (x !== y) parent.set(x, y); };
-    const active = edges.filter(e => isActive(e, includeDeadEnds));
-    for (const e of active) { if (!parent.has(e.a)) parent.set(e.a, e.a); if (!parent.has(e.b)) parent.set(e.b, e.b); union(e.a, e.b); }
+    const touch = x => { if (!parent.has(x)) parent.set(x, x); };
+    const union = (x, y) => { touch(x); touch(y); x = find(x); y = find(y); if (x !== y) parent.set(x, y); };
+    for (const e of list) union(e.a, e.b);
+    for (const [x, y] of joins || []) if (parent.has(x) && parent.has(y)) union(x, y);
     const lenByRoot = new Map();
-    for (const e of active) { const r = find(e.a); lenByRoot.set(r, (lenByRoot.get(r) || 0) + e.len); }
+    for (const e of list) { const r = find(e.a); lenByRoot.set(r, (lenByRoot.get(r) || 0) + e.len); }
     let best = null, bestLen = -1;
     for (const [r, l] of lenByRoot) if (l > bestLen) { best = r; bestLen = l; }
-    let dropped = 0;
-    for (const e of edges) {
-      e.isolated = false;
-      if (isActive(e, includeDeadEnds) && find(e.a) !== best) { e.isolated = true; dropped += e.len; }
-    }
-    return { components: lenByRoot.size, largestLen: Math.max(0, bestLen), droppedLen: dropped };
+    return { find, best, bestLen: Math.max(0, bestLen), lenByRoot };
   }
+
+  /**
+   * Keep only the largest connected piece (by length). Sets e.isolated on the rest.
+   * Pieces that are only disconnected because of the user's blocks or barriers are
+   * flagged e.cutOff as well: they are dropped on purpose, not a data problem.
+   * `joins` are node pairs a barrier split apart (treated as connected for that test).
+   */
+  function markComponents(edges, includeDeadEnds, joins) {
+    const active = edges.filter(e => isActive(e, includeDeadEnds));
+    const now = components(active);
+    // the network as it would be without any blocks or barriers
+    const natural = components(edges.filter(e => includeDeadEnds || !e.deadEnd), joins);
+    let dropped = 0, cutLen = 0;
+    const brokenRoots = new Set();
+    for (const e of edges) {
+      e.isolated = false; e.cutOff = false;
+      if (!isActive(e, includeDeadEnds) || now.find(e.a) === now.best) continue;
+      e.isolated = true;
+      if (natural.find(e.a) === natural.best) { e.cutOff = true; cutLen += e.len; }
+      else { dropped += e.len; brokenRoots.add(now.find(e.a)); }
+    }
+    return { components: brokenRoots.size + 1, largestLen: now.bestLen, droppedLen: dropped, cutLen };
+  }
+
+  const AVOID_FACTOR = 12;   // an avoided street must be this much shorter than any detour before it is repeated
+  const cost = e => e.avoid ? e.len * AVOID_FACTOR : e.len;
 
   function buildAdjacency(E) {
     const adj = new Map();
@@ -112,7 +134,7 @@ window.RAA = window.RAA || {};
       done.add(u);
       if (targets && targets.has(u) && --remaining === 0) break;
       for (const { e, to } of adj.get(u) || []) {
-        const nd = d + e.len;
+        const nd = d + cost(e);
         if (nd < (dist.has(to) ? dist.get(to) : Infinity)) { dist.set(to, nd); prev.set(to, { node: u, edge: e }); heap.push(nd, to); }
       }
     }

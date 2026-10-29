@@ -55,7 +55,7 @@
 
     <section class="step" id="step-tune">
       <div class="step-head"><span class="bib">3</span><h2>Tune the course</h2></div>
-      <p class="hint">Click a street on the map to kick it out (click again to bring it back).</p>
+      <p class="hint">Click a street to <b>run</b>, <b>avoid</b> or <b>block</b> it. Shift-click blocks in one go. Use <b>Cut</b> to make a street impassable at one exact spot.</p>
       <label class="switch"><input type="checkbox" id="t-deadends" checked><span class="track"></span> Include dead-end streets</label>
       <div class="btn-row">
         <button id="btn-path" class="btn magenta">✎ Draw my own path</button>
@@ -65,15 +65,20 @@
         <button id="btn-start" class="btn">🏁 Set start point</button>
         <button id="btn-clear-start" class="btn ghost" title="Remove start point">✕</button>
       </div>
-      <button id="btn-reset-excl" class="btn ghost wide">↺ Reset excluded streets</button>
+      <div class="btn-row">
+        <button id="btn-cut" class="btn">✂ Cut a passage</button>
+        <button id="btn-reset-excl" class="btn ghost" title="Remove all blocks, avoids and cuts">↺</button>
+      </div>
       <div class="stat-grid small-tiles">
         <div class="tile"><span class="v" id="net-streets">–</span><span class="k">streets</span></div>
         <div class="tile"><span class="v" id="net-km">–</span><span class="k">to cover</span></div>
         <div class="tile"><span class="v" id="net-dead">–</span><span class="k">dead ends</span></div>
-        <div class="tile"><span class="v" id="net-excluded">–</span><span class="k">excluded</span></div>
+        <div class="tile"><span class="v" id="net-excluded">–</span><span class="k">blocked</span></div>
+        <div class="tile"><span class="v" id="net-avoid">–</span><span class="k">avoided</span></div>
         <div class="tile"><span class="v" id="net-custom">–</span><span class="k">own paths</span></div>
       </div>
       <p id="net-warn" class="warn" hidden></p>
+      <p id="net-cut" class="note" hidden></p>
     </section>
 
     <section class="step" id="step-route">
@@ -113,7 +118,8 @@
   <div class="legend">
     <div><i style="background:#38bdf8"></i>street</div>
     <div><i class="dash" style="background:#38bdf8"></i>dead end</div>
-    <div><i class="dash" style="background:#ff3b5c"></i>excluded</div>
+    <div><i class="dash" style="background:#ff3b5c"></i>blocked</div>
+    <div><i class="dash" style="background:#f59e0b"></i>avoid</div>
     <div><i style="background:#e879f9"></i>my path</div>
     <div><i style="background:#c6ff00"></i>route</div>
     <div><i style="background:#ff8c42"></i>run twice</div>
@@ -127,7 +133,7 @@
     <ol>
       <li><b>Mark your turf</b> with a rectangle or polygon.</li>
       <li><b>Fetch</b> pulls every walkable way inside it from OpenStreetMap (via the Overpass API).</li>
-      <li><b>Tune:</b> click streets to exclude them, toggle dead ends, draw your own shortcuts (ends snap to the nearest street within 30 m) and pick a start.</li>
+      <li><b>Tune:</b> click a street to choose <i>Run it</i>, <i>Avoid</i> (covered once if needed, never run twice) or <i>Block</i> (never run). Blocking a piece also drops anything it cuts off, such as the rest of a dead-end branch. <i>Cut here</i> makes a street impassable at one spot, so you can block just part of it. Toggle dead ends, draw your own shortcuts (ends snap to the nearest street within 30 m) and pick a start.</li>
       <li><b>GO!</b> solves the <i>Chinese Postman Problem</i> (route inspection): it finds the shortest closed loop that covers every street at least once. Corners with an odd number of streets are paired up along the cheapest connections, those streets are run twice (orange), then an Euler circuit is traced.</li>
       <li><b>Download GPX</b> and import it as a course in Garmin Connect, then send it to your watch.</li>
     </ol>

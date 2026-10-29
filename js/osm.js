@@ -253,5 +253,51 @@ window.RAA = window.RAA || {};
     return e;
   }
 
-  RAA.osm = { fetchStreets, buildGraph, addCustomPath, nearestGraphPoint, pointInPolygon };
+  /**
+   * Barrier: make a street impassable at point p (within maxM metres).
+   * The street is split there with two separate end nodes, so each side becomes a dead end.
+   * At an intersection, only the clicked street is detached from it.
+   * Returns the node pair [left, right] that the cut separated, or null if nothing was near.
+   */
+  function cutAt(g, p, maxM, barrierId) {
+    const hit = nearestGraphPoint(g.edges, p, maxM);
+    if (!hit) return null;
+    const { edge, segIndex, t } = hit;
+    const A = 'x' + barrierId + 'a', B = 'x' + barrierId + 'b';
+    const origKey = edge.origKey || edge.key;
+    const rekey = e => { e.key = `${e.wayId}:${e.a}:${e.b}`; e.origKey = origKey; };
+    let idx;
+    if (t < 0.02) idx = segIndex;
+    else if (t > 0.98) idx = segIndex + 1;
+    else {
+      edge.nodeIds.splice(segIndex + 1, 0, A);
+      edge.coords.splice(segIndex + 1, 0, { lat: hit.point.lat, lng: hit.point.lng });
+      idx = segIndex + 1;
+    }
+    const last = edge.nodeIds.length - 1;
+    const at = edge.coords[idx];
+    g.nodePos.set(A, { lat: at.lat, lng: at.lng });
+    g.nodePos.set(B, { lat: at.lat, lng: at.lng });
+    if (idx === 0 || idx === last) {
+      // cut right at an intersection or street end: detach this street from that node
+      const old = edge.nodeIds[idx];
+      edge.nodeIds[idx] = B;
+      if (idx === 0) edge.a = B; else edge.b = B;
+      rekey(edge);
+      return [old, B];
+    }
+    const mk = (nodeIds, coords) => {
+      const e = Object.assign({}, edge, { id: nextEdgeId(), a: nodeIds[0], b: nodeIds[nodeIds.length - 1], nodeIds, coords, len: RAA.graph.pathLength(coords) });
+      rekey(e);
+      return e;
+    };
+    const left = edge.nodeIds.slice(0, idx + 1); left[idx] = A;
+    const right = edge.nodeIds.slice(idx); right[0] = B;
+    const e1 = mk(left, edge.coords.slice(0, idx + 1));
+    const e2 = mk(right, edge.coords.slice(idx));
+    g.edges.splice(g.edges.indexOf(edge), 1, e1, e2);
+    return [A, B];
+  }
+
+  RAA.osm = { fetchStreets, buildGraph, addCustomPath, cutAt, nearestGraphPoint, pointInPolygon };
 })(window.RAA);
