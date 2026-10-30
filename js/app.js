@@ -81,6 +81,7 @@ window.RAA = window.RAA || {};
     constructor(map) {
       this.map = map; this.active = null; this.shape = null;
       this.temp = L.layerGroup().addTo(map);
+      this.dots = L.layerGroup().addTo(this.temp);   // corner markers
       this.doneAt = 0;
       this._onKey = this._onKey.bind(this);
       // Pointer events, so a rectangle can be dragged with a finger as well as a mouse.
@@ -110,8 +111,8 @@ window.RAA = window.RAA || {};
       const verb = matchMedia('(pointer: coarse)').matches ? 'Tap' : 'Click';
       $('drawbar-text').textContent = {
         rect: 'Drag on the map to draw a rectangle',
-        poly: `${verb} the corners of your area`,
-        line: `${verb} along your path`,
+        poly: `${verb} the corners of your area. Drag or pinch to move the map.`,
+        line: `${verb} along your path. Drag or pinch to move the map.`,
       }[kind];
       $('db-undo').hidden = $('db-done').hidden = kind === 'rect';
       $('drawbar').hidden = false;
@@ -141,11 +142,11 @@ window.RAA = window.RAA || {};
       el.removeEventListener('pointermove', this._rectMove);
       el.removeEventListener('pointerup', this._rectUp);
       el.removeEventListener('pointercancel', this._rectUp);
-      if (ev.type === 'pointercancel') { this.temp.clearLayers(); this.shape = null; return; }
+      if (ev.type === 'pointercancel') { if (this.shape) this.temp.removeLayer(this.shape); this.shape = null; return; }
       const b = L.latLngBounds(this.active.points[0], this.map.mouseEventToLatLng(ev));
       const a = this.map.latLngToContainerPoint(b.getNorthWest()), c = this.map.latLngToContainerPoint(b.getSouthEast());
       // a tap or a tiny drag: keep waiting for a real rectangle
-      if (Math.abs(a.x - c.x) < 10 || Math.abs(a.y - c.y) < 10) { this.temp.clearLayers(); this.shape = null; return; }
+      if (Math.abs(a.x - c.x) < 10 || Math.abs(a.y - c.y) < 10) { if (this.shape) this.temp.removeLayer(this.shape); this.shape = null; return; }
       this._complete([b.getNorthWest(), b.getNorthEast(), b.getSouthEast(), b.getSouthWest()]);
     }
     _vertex(e) {
@@ -153,6 +154,7 @@ window.RAA = window.RAA || {};
       const last = pts[pts.length - 1];
       if (last && this.map.latLngToContainerPoint(last).distanceTo(this.map.latLngToContainerPoint(e.latlng)) < 4) return;
       pts.push(e.latlng);
+      L.circleMarker(e.latlng, { radius: 5, weight: 2, color: '#fff', fillColor: this._style().color, fillOpacity: 1, interactive: false }).addTo(this.dots);
       this._redraw(e.latlng);
     }
     _move(e) { this._redraw(e.latlng); }
@@ -177,6 +179,8 @@ window.RAA = window.RAA || {};
     undo() {
       if (!this.active || this.active.kind === 'rect') return;
       this.active.points.pop();
+      const dots = this.dots.getLayers();
+      if (dots.length) this.dots.removeLayer(dots[dots.length - 1]);
       if (this.shape) this.shape.setLatLngs(this.active.points);
     }
     finish() { if (this.active && this.active.kind !== 'rect') this._finish(); }
@@ -205,6 +209,8 @@ window.RAA = window.RAA || {};
       this.map.getContainer().classList.remove('drawing');
       delete document.body.dataset.drawing;
       this.temp.clearLayers();
+      this.dots.clearLayers();
+      this.temp.addLayer(this.dots);
       this.shape = null;
       this.active = null;
     }
