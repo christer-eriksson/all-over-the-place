@@ -61,7 +61,7 @@ svg { display: block; }
 body.panel-collapsed .panel { margin-left: calc(var(--panel-w) * -1); }
 #map { flex: 1; background: #e9e6df; }
 .leaflet-container { font-family: var(--font); }
-.leaflet-container.drawing { cursor: crosshair !important; }
+.leaflet-container.drawing { cursor: crosshair !important; touch-action: none; }
 .leaflet-container.pick { cursor: crosshair !important; }
 .soft-tiles { filter: grayscale(.85) contrast(.82) brightness(1.07); }
 .night-tiles { filter: invert(1) hue-rotate(195deg) brightness(.85) contrast(.9) saturate(.3); }
@@ -226,8 +226,77 @@ body.panel-collapsed .legend { left: 12px; max-width: calc(100% - 90px); }
 .help-card ol { padding-left: 20px; } .help-card li { margin-bottom: 8px; }
 kbd { background: var(--bg); border: 1px solid var(--line-strong); border-radius: 4px; padding: 1px 5px; font-size: 11px; font-family: inherit; }
 
+/* ---------- drawing bar ---------- */
+.drawbar {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1001;
+  display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 14px; max-width: calc(100% - 24px);
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); font-size: 13px; cursor: default;
+}
+.drawbar[hidden] { display: none; }
+#drawbar-text { margin-right: 4px; }
+.drawbar .btn { padding: 7px 12px; }
+.drawbar .btn.primary { width: auto; }
+.drawbar .btn[hidden] { display: none; }
+
+/* desktop: phone-only bits hidden */
+.stepper, .sheet-handle, .btn.next { display: none; }
+
+/* ---------- phone: step bar on top, full-width map, one step at a time in a bottom sheet ---------- */
 @media (max-width: 760px) {
-  :root { --panel-w: 300px; }
-  .tagline, .pace small { display: none; }
+  html, body { height: 100dvh; }
+  .topbar { height: 52px; padding: 0 8px 0 12px; gap: 8px; }
+  #btn-panel, .tagline, .pace > span { display: none; }
+  .brand { min-width: 0; }
+  .brand h1 { font-size: 16px; overflow: hidden; text-overflow: ellipsis; }
+  .topbar-right { gap: 2px; flex: none; }
+  .pace { gap: 4px; margin-right: 4px; }
+
+  .stepper {
+    display: flex; gap: 2px; padding: 6px 6px 8px; background: var(--card); border-bottom: 1px solid var(--line);
+    position: relative; z-index: 999;
+  }
+  .stepper button {
+    flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    background: none; border: 0; padding: 4px 2px; border-radius: 8px; cursor: pointer;
+    font: 500 11px var(--font); color: var(--muted); position: relative;
+  }
+  /* thin line joining the step numbers */
+  .stepper button + button::before {
+    content: ''; position: absolute; top: 15px; right: calc(50% + 15px); width: calc(100% - 30px); height: 1px; background: var(--line-strong);
+  }
+  .stepper .num { width: 22px; height: 22px; font-size: 11px; background: var(--bg); color: var(--muted); border: 1px solid var(--line-strong); }
+  .stepper button.done .num { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  .stepper button.on { color: var(--text); font-weight: 600; }
+  .stepper button.on .num { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .layout { display: block; }
+  #map { position: absolute; inset: 0; }
+  .panel {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 1000; width: auto; max-height: 55%;
+    margin: 0 !important; padding: 0 0 calc(12px + env(safe-area-inset-bottom)); border: 0; border-top: 1px solid var(--line);
+    border-radius: 16px 16px 0 0; background: var(--card); box-shadow: 0 -6px 24px rgba(36,39,46,.12); transition: none;
+  }
+  .sheet-handle {
+    display: block; position: sticky; top: 0; z-index: 1; width: 100%; height: 20px; border: 0; padding: 0; cursor: pointer;
+    background: var(--card);
+  }
+  .sheet-handle::before { content: ''; display: block; width: 38px; height: 4px; border-radius: 2px; background: var(--line-strong); margin: 8px auto 0; }
+  .panel .step { display: none; margin: 0; padding: 2px 16px 4px; border: 0; border-radius: 0; box-shadow: none; opacity: 1; }
+  .panel .step.current { display: block; }
+  .step-head { cursor: pointer; }
+  .credits { display: none; }
+  body.sheet-min .panel .step.current > :not(.step-head) { display: none; }
+  body.sheet-min .step-head { margin-bottom: 0; }
+  .btn.next { display: block; width: 100%; margin-top: 12px; color: var(--accent-hover); border-color: #f2c2b6; }
+
+  .btn, .stepper button { min-height: 40px; }
+  .btn-row .btn.ghost { flex-basis: 44px; }
+  .leaflet-bottom { bottom: var(--sheet-h, 0px); }
   .legend { display: none; }
+  #toast { top: 120px; bottom: auto; transform: translate(-50%, -8px); max-width: calc(100% - 32px); }
+  #toast.show { transform: translate(-50%, 0); }
+  .drawbar { top: 8px; padding-left: 12px; flex-wrap: wrap; justify-content: center; }
+  #drawbar-text { flex-basis: 100%; text-align: center; margin: 2px 0 2px; }
+  .menu-popup .leaflet-popup-content { margin: 12px; }
+  .edge-menu button { padding: 9px 10px; }
 }

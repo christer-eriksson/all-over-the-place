@@ -25,7 +25,7 @@
     <span class="tagline">Every street, one loop</span>
   </div>
   <div class="topbar-right">
-    <label class="pace">Pace <input id="pace" value="5:30" size="4" title="Minutes per kilometre"> <small>/km</small></label>
+    <label class="pace"><span>Pace</span> <input id="pace" value="5:30" size="4" title="Minutes per kilometre"> <small>/km</small></label>
     <button id="btn-fit" class="icon-btn" title="Zoom to area" aria-label="Zoom to area">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="6"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
     </button>
@@ -35,8 +35,17 @@
   </div>
 </header>
 
+<nav class="stepper" id="stepper" aria-label="Steps">
+  <button data-step="0"><span class="num">1</span><span>Area</span></button>
+  <button data-step="1"><span class="num">2</span><span>Streets</span></button>
+  <button data-step="2"><span class="num">3</span><span>Adjust</span></button>
+  <button data-step="3"><span class="num">4</span><span>Route</span></button>
+  <button data-step="4"><span class="num">5</span><span>Export</span></button>
+</nav>
+
 <div class="layout">
-  <aside class="panel">
+  <aside class="panel" id="panel">
+    <button class="sheet-handle" id="sheet-handle" aria-label="Show or hide the step"></button>
 
     <section class="step ready" id="step-area">
       <div class="step-head"><span class="num">1</span><h2>Choose an area</h2></div>
@@ -128,7 +137,14 @@
     <footer class="credits">Street data © OpenStreetMap contributors. Routing runs in your browser.</footer>
   </aside>
 
-  <main id="map"></main>
+  <main id="map">
+    <div class="drawbar" id="drawbar" hidden>
+      <span id="drawbar-text"></span>
+      <button id="db-undo" class="btn">Undo</button>
+      <button id="db-cancel" class="btn">Cancel</button>
+      <button id="db-done" class="btn primary">Done</button>
+    </div>
+  </main>
 
   <div class="legend">
     <div><i class="sw street"></i>Street</div>

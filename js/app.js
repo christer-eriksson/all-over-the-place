@@ -81,17 +81,25 @@ window.RAA = window.RAA || {};
     constructor(map) {
       this.map = map; this.active = null; this.shape = null;
       this.temp = L.layerGroup().addTo(map);
+      this.doneAt = 0;
       this._onKey = this._onKey.bind(this);
+      // Pointer events, so a rectangle can be dragged with a finger as well as a mouse.
+      this._rectDown = this._rectDown.bind(this);
+      this._rectMove = this._rectMove.bind(this);
+      this._rectUp = this._rectUp.bind(this);
     }
-    get busy() { return !!this.active; }
+    // also swallow the click that the browser sends right after a shape is finished
+    get busy() { return !!this.active || Date.now() - this.doneAt < 400; }
     start(kind, done) {
       this.cancel();
       this.active = { kind, done, points: [] };
-      this.map.getContainer().classList.add('drawing');
+      const el = this.map.getContainer();
+      el.classList.add('drawing');
       document.addEventListener('keydown', this._onKey);
       if (kind === 'rect') {
         this.map.dragging.disable();
-        this.map.on('mousedown', this._rectDown, this);
+        this.map.touchZoom.disable();
+        el.addEventListener('pointerdown', this._rectDown);
       } else {
         this.map.doubleClickZoom.disable();
         this.map.on('click', this._vertex, this);
@@ -99,24 +107,45 @@ window.RAA = window.RAA || {};
         this.map.on('dblclick', this._finish, this);
       }
       document.body.dataset.drawing = kind;
+      const verb = matchMedia('(pointer: coarse)').matches ? 'Tap' : 'Click';
+      $('drawbar-text').textContent = {
+        rect: 'Drag on the map to draw a rectangle',
+        poly: `${verb} the corners of your area`,
+        line: `${verb} along your path`,
+      }[kind];
+      $('db-undo').hidden = $('db-done').hidden = kind === 'rect';
+      $('drawbar').hidden = false;
+      document.body.classList.add('sheet-min');
     }
     _style() {
       return this.active.kind === 'line'
         ? { color: C.mine, weight: 4, dashArray: '6 6' }
         : { color: C.area, weight: 2, dashArray: '6 6', fillColor: C.area, fillOpacity: 0.06 };
     }
-    _rectDown(e) {
-      this.active.points = [e.latlng];
-      this.map.on('mousemove', this._rectMove, this);
-      this.map.on('mouseup', this._rectUp, this);
+    _rectDown(ev) {
+      if (!ev.isPrimary || ev.button > 0 || ev.target.closest('.drawbar, .leaflet-control')) return;
+      ev.preventDefault();
+      const el = this.map.getContainer();
+      el.setPointerCapture(ev.pointerId);
+      this.active.points = [this.map.mouseEventToLatLng(ev)];
+      el.addEventListener('pointermove', this._rectMove);
+      el.addEventListener('pointerup', this._rectUp);
+      el.addEventListener('pointercancel', this._rectUp);
     }
-    _rectMove(e) {
-      const b = L.latLngBounds(this.active.points[0], e.latlng);
+    _rectMove(ev) {
+      const b = L.latLngBounds(this.active.points[0], this.map.mouseEventToLatLng(ev));
       if (!this.shape) this.shape = L.rectangle(b, this._style()).addTo(this.temp); else this.shape.setBounds(b);
     }
-    _rectUp(e) {
-      const b = L.latLngBounds(this.active.points[0], e.latlng);
-      if (b.getNorth() === b.getSouth() || b.getEast() === b.getWest()) { this.cancel(); return; }
+    _rectUp(ev) {
+      const el = this.map.getContainer();
+      el.removeEventListener('pointermove', this._rectMove);
+      el.removeEventListener('pointerup', this._rectUp);
+      el.removeEventListener('pointercancel', this._rectUp);
+      if (ev.type === 'pointercancel') { this.temp.clearLayers(); this.shape = null; return; }
+      const b = L.latLngBounds(this.active.points[0], this.map.mouseEventToLatLng(ev));
+      const a = this.map.latLngToContainerPoint(b.getNorthWest()), c = this.map.latLngToContainerPoint(b.getSouthEast());
+      // a tap or a tiny drag: keep waiting for a real rectangle
+      if (Math.abs(a.x - c.x) < 10 || Math.abs(a.y - c.y) < 10) { this.temp.clearLayers(); this.shape = null; return; }
       this._complete([b.getNorthWest(), b.getNorthEast(), b.getSouthEast(), b.getSouthWest()]);
     }
     _vertex(e) {
@@ -142,29 +171,37 @@ window.RAA = window.RAA || {};
     }
     _onKey(e) {
       if (e.key === 'Escape') { this.cancel(); toast('Drawing cancelled'); }
-      else if (e.key === 'Enter') { if (this.active && this.active.kind !== 'rect') this._finish(); }
-      else if (e.key === 'Backspace' && this.active && this.active.kind !== 'rect' && !/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) {
-        this.active.points.pop();
-        if (this.shape && this.active.points.length) this.shape.setLatLngs(this.active.points);
-        e.preventDefault();
-      }
+      else if (e.key === 'Enter') this.finish();
+      else if (e.key === 'Backspace' && !/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) { this.undo(); e.preventDefault(); }
     }
+    undo() {
+      if (!this.active || this.active.kind === 'rect') return;
+      this.active.points.pop();
+      if (this.shape) this.shape.setLatLngs(this.active.points);
+    }
+    finish() { if (this.active && this.active.kind !== 'rect') this._finish(); }
     _complete(points) {
       const a = this.active;
       this.cancel();
+      this.doneAt = Date.now();
       a.done(points);
     }
     cancel() {
       if (!this.active) return;
-      this.map.off('mousedown', this._rectDown, this);
-      this.map.off('mousemove', this._rectMove, this);
-      this.map.off('mouseup', this._rectUp, this);
+      const el = this.map.getContainer();
+      el.removeEventListener('pointerdown', this._rectDown);
+      el.removeEventListener('pointermove', this._rectMove);
+      el.removeEventListener('pointerup', this._rectUp);
+      el.removeEventListener('pointercancel', this._rectUp);
       this.map.off('click', this._vertex, this);
       this.map.off('mousemove', this._move, this);
       this.map.off('dblclick', this._finish, this);
       document.removeEventListener('keydown', this._onKey);
       this.map.dragging.enable();
+      this.map.touchZoom.enable();
       this.map.doubleClickZoom.enable();
+      $('drawbar').hidden = true;
+      document.body.classList.remove('sheet-min');
       this.map.getContainer().classList.remove('drawing');
       delete document.body.dataset.drawing;
       this.temp.clearLayers();
@@ -173,6 +210,35 @@ window.RAA = window.RAA || {};
     }
   }
   const drawer = new Drawer(map);
+
+  // ---------- Steps (phone: one step at a time in a bottom sheet) ----------
+  const STEPS = ['step-area', 'step-fetch', 'step-tune', 'step-route', 'step-export'];
+  const STEP_NAMES = ['Area', 'Load streets', 'Adjust the course', 'Plan the route', 'Export'];
+  const phone = matchMedia('(max-width: 760px)');
+  let step = 0;
+
+  function showStep(i) {
+    step = i;
+    STEPS.forEach((id, k) => $(id).classList.toggle('current', k === i));
+    document.body.classList.remove('sheet-min');
+    $('panel').scrollTop = 0;
+    updateStepper();
+  }
+  function updateStepper() {
+    const done = [!!state.area, !!state.elements, state.graph.edges.length > 0, !!state.route, false];
+    document.querySelectorAll('#stepper button').forEach((b, k) => {
+      b.classList.toggle('on', k === step);
+      b.classList.toggle('done', k !== step && done[k]);
+    });
+  }
+  /** Where to start: the furthest step that has what it needs. */
+  function bestStep() { return state.route ? 3 : state.graph.edges.length ? 2 : state.area ? 1 : 0; }
+
+  // Keep the map controls above the sheet on a phone.
+  new ResizeObserver(() => {
+    const h = phone.matches ? $('panel').offsetHeight : 0;
+    document.body.style.setProperty('--sheet-h', h + 'px');
+  }).observe($('panel'));
 
   // ---------- Persistence ----------
   function save() {
@@ -216,6 +282,7 @@ window.RAA = window.RAA || {};
     }
     $('btn-fetch').disabled = !ring; $('btn-refetch').disabled = !ring;
     $('area-info').textContent = ring ? `${ring.length}-point area marked. Load the streets when you're ready.` : 'No area yet.';
+    updateStepper();
     save();
   }
 
@@ -439,6 +506,7 @@ window.RAA = window.RAA || {};
     $('btn-route').disabled = active.length === 0;
     $('step-tune').classList.toggle('ready', edges.length > 0);
     $('step-route').classList.toggle('ready', edges.length > 0);
+    updateStepper();
   }
 
   // ---------- Start point ----------
@@ -459,6 +527,10 @@ window.RAA = window.RAA || {};
   }
 
   function setMode(mode) {
+    const picking = m => m === 'start' || m === 'cut';
+    // on a phone, get the sheet out of the way while picking a spot on the map
+    if (picking(mode)) document.body.classList.add('sheet-min');
+    else if (picking(state.mode)) document.body.classList.remove('sheet-min');
     state.mode = mode;
     document.body.dataset.mode = mode;
     $('btn-start').classList.toggle('active', mode === 'start');
@@ -469,6 +541,7 @@ window.RAA = window.RAA || {};
   // ---------- Route ----------
   function clearRoute() {
     state.route = null;
+    updateStepper();
     routeLayer.clearLayers();
     // the auto-placed start marker from the last route is stale now
     if (!state.start && startMarker) { map.removeLayer(startMarker); startMarker = null; }
@@ -499,6 +572,7 @@ window.RAA = window.RAA || {};
     L.polyline(coords, { renderer: svg, color: '#ffffff', weight: 7, opacity: 0.9, lineJoin: 'round', interactive: false }).addTo(routeLayer);
     L.polyline(coords, { renderer: svg, color: C.route, weight: 3.5, opacity: 1, lineJoin: 'round', interactive: false }).addTo(routeLayer);
     if (!state.start && res.start != null) setStartMarkerOnly(nodePos.get(res.start));
+    updateStepper();
 
     $('rs-streets').textContent = fmtKm(res.streetLength);
     $('rs-route').textContent = fmtKm(res.routeLength);
@@ -569,7 +643,8 @@ window.RAA = window.RAA || {};
         : `${ways} ways downloaded from OpenStreetMap and saved for next time.`;
       rebuild();
       if (state.start) setStart(state.start);
-      toast('Streets loaded. Click a street to exclude it.', 'ok');
+      toast('Streets loaded. Tap or click a street to change it.', 'ok');
+      if (step < 2) showStep(2);
     } catch (err) {
       status.textContent = 'Could not load streets: ' + err.message;
       toast('Could not fetch streets: ' + err.message, 'warn');
@@ -580,8 +655,8 @@ window.RAA = window.RAA || {};
 
   // ---------- Wire up UI ----------
   function wire() {
-    $('btn-rect').onclick = () => { setMode('exclude'); toast('Drag a rectangle on the map'); drawer.start('rect', ring => { setArea(ring); }); };
-    $('btn-poly').onclick = () => { setMode('exclude'); toast('Click corners, double-click or Enter to finish'); drawer.start('poly', ring => { setArea(ring); }); };
+    $('btn-rect').onclick = () => { setMode('exclude'); drawer.start('rect', ring => { setArea(ring); showStep(1); }); };
+    $('btn-poly').onclick = () => { setMode('exclude'); drawer.start('poly', ring => { setArea(ring); showStep(1); }); };
     // Clearing the area keeps your own paths, cuts, blocks and avoids for next time.
     $('btn-clear-area').onclick = () => { drawer.cancel(); setStart(null); setArea(null); state.elements = null; state.graph = { edges: [], nodePos: new Map() }; edgeLayer.clearLayers(); clearRoute(); $('fetch-status').textContent = ''; updateNetworkStats(null); rebuild(); };
     $('btn-fetch').onclick = () => fetchStreets();
@@ -602,7 +677,6 @@ window.RAA = window.RAA || {};
 
     $('btn-path').onclick = () => {
       setMode('exclude');
-      toast('Click along your path, double-click or Enter to finish. Ends snap to nearby streets.');
       drawer.start('line', pts => {
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
         state.customPaths.push({ id, latlngs: pts });
@@ -672,10 +746,33 @@ window.RAA = window.RAA || {};
     }
     $('btn-gpx').onclick = () => exportCourse('gpx');
     $('btn-tcx').onclick = () => exportCourse('tcx');
-    $('btn-fit').onclick = () => { if (state.area) map.fitBounds(L.latLngBounds(state.area), { padding: [40, 40] }); };
+    $('btn-fit').onclick = () => {
+      if (state.area) map.fitBounds(L.latLngBounds(state.area), { paddingTopLeft: [30, 30], paddingBottomRight: [30, 30 + (phone.matches ? $('panel').offsetHeight : 0)] });
+    };
     $('btn-help').onclick = () => $('help').classList.toggle('open');
     $('help-close').onclick = () => $('help').classList.remove('open');
     $('btn-panel').onclick = () => document.body.classList.toggle('panel-collapsed');
+    $('panel').addEventListener('transitionend', () => map.invalidateSize());
+
+    // drawing bar
+    L.DomEvent.disableClickPropagation($('drawbar'));
+    $('db-undo').onclick = () => drawer.undo();
+    $('db-done').onclick = () => drawer.finish();
+    $('db-cancel').onclick = () => drawer.cancel();
+
+    // steps
+    document.querySelectorAll('#stepper button').forEach(b => { b.onclick = () => showStep(+b.dataset.step); });
+    STEPS.slice(0, -1).forEach((id, k) => {
+      const next = document.createElement('button');
+      next.className = 'btn next';
+      next.textContent = `Next: ${STEP_NAMES[k + 1]} →`;
+      next.onclick = () => showStep(k + 1);
+      $(id).appendChild(next);
+    });
+    const toggleSheet = () => { if (phone.matches) document.body.classList.toggle('sheet-min'); };
+    $('sheet-handle').onclick = toggleSheet;
+    document.querySelectorAll('.step-head').forEach(h => { h.onclick = toggleSheet; });
+    phone.addEventListener('change', () => { document.body.classList.remove('sheet-min'); setTimeout(() => map.invalidateSize(), 50); });
     map.on('moveend', save);
   }
 
@@ -697,6 +794,7 @@ window.RAA = window.RAA || {};
     drawBarriers();
     drawSaved();
     updateNetworkStats(null);
+    showStep(bestStep());
   }
 
   RAA.app = { state, map, computeRoute, rebuild, setArea, fetchStreets };
