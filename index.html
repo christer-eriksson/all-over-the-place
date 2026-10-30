@@ -57,7 +57,10 @@
         <label><input type="checkbox" id="f-sidewalks"> Sidewalks</label>
         <label><input type="checkbox" id="f-steps"> Steps</label>
       </div>
-      <button id="btn-fetch" class="btn primary" disabled>Fetch from OpenStreetMap</button>
+      <div class="btn-row">
+        <button id="btn-fetch" class="btn primary" disabled>Load streets</button>
+        <button id="btn-refetch" class="btn ghost" disabled title="Download a fresh copy from OpenStreetMap, ignoring the saved one" aria-label="Download a fresh copy">↻</button>
+      </div>
       <p id="fetch-status" class="small muted"></p>
     </section>
 
@@ -151,7 +154,7 @@
       <li><b>Plan the route.</b> This solves the route inspection problem, also called the Chinese Postman Problem. It pairs up corners with an odd number of streets along the cheapest connections, runs those streets twice, and traces one continuous loop.</li>
       <li><b>Export</b> a GPX or TCX file and import it as a course in Garmin Connect.</li>
     </ol>
-    <p class="small muted">While drawing, press <kbd>Enter</kbd> to finish, <kbd>Backspace</kbd> to undo a point and <kbd>Esc</kbd> to cancel. Everything you set is remembered in this browser. Your own paths and cuts are kept when you clear or move the area, and are used wherever they fall inside it.</p>
+    <p class="small muted">While drawing, press <kbd>Enter</kbd> to finish, <kbd>Backspace</kbd> to undo a point and <kbd>Esc</kbd> to cancel. Everything you set is remembered in this browser, and downloaded streets are kept for 90 days so the same area loads instantly next time. Press ↻ next to Load streets for a fresh copy. Your own paths and cuts are kept when you clear or move the area, and are used wherever they fall inside it.</p>
   </div>
 </div>
 

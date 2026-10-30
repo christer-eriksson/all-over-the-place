@@ -11,6 +11,7 @@ window.RAA = window.RAA || {};
     'https://overpass-api.de/api/interpreter',
     'https://overpass.kumi.systems/api/interpreter',
     'https://overpass.private.coffee/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
   ];
 
   const ROADS   = new Set(['residential', 'living_street', 'unclassified', 'tertiary', 'secondary', 'primary',
@@ -27,39 +28,69 @@ window.RAA = window.RAA || {};
 
     // Every highway type any filter combination can use, so filters can change without a refetch.
   const WANTED = [...ROADS, ...TRAILS, ...SERVICE, ...STEPS].join('|');
-  const PAD_M = 150;          // fetch a little beyond the area so small redraws reuse the download
   const TRY_MS = 30000;       // give up on one server after this and try the next
-  const cache = [];           // [{ box, elements }] downloads from this visit, newest first
+  const RUN = 4;              // at most this many tiles side by side in one request
 
-  function boxOf(ring, padM) {
-    const lats = ring.map(p => p.lat), lngs = ring.map(p => p.lng);
-    const dLat = padM / 111320, dLng = dLat / Math.max(0.2, Math.cos(lats[0] * Math.PI / 180));
-    return { s: Math.min(...lats) - dLat, w: Math.min(...lngs) - dLng, n: Math.max(...lats) + dLat, e: Math.max(...lngs) + dLng };
+  // ---------- Tile cache ----------
+  // Streets are downloaded in fixed tiles of about 1 x 1 km and kept in IndexedDB, so a
+  // redraw, a bigger area or a later visit only downloads the tiles that are missing.
+  const TILE_LAT = 0.01, TILE_LNG = 0.02;
+  const MAX_AGE = 90 * 24 * 3600 * 1000;   // OSM streets change slowly
+  const mem = new Map();      // tile key -> { t, elements }
+  const tileKey = (ty, tx) => `${ty}:${tx}`;
+  const tileBox = (ty, tx) => ({ s: ty * TILE_LAT, w: tx * TILE_LNG, n: (ty + 1) * TILE_LAT, e: (tx + 1) * TILE_LNG });
+
+  let dbp = null;
+  function db() {
+    if (!dbp) dbp = new Promise(res => {
+      try {
+        const r = indexedDB.open('raa-cache', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('tiles');
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => res(null);
+      } catch (e) { res(null); }
+    });
+    return dbp;
   }
-  const contains = (o, i) => i.s >= o.s && i.w >= o.w && i.n <= o.n && i.e <= o.e;
+  async function idb(mode, fn) {
+    const d = await db();
+    if (!d) return null;
+    return new Promise(res => {
+      try {
+        const tx = d.transaction('tiles', mode);
+        const req = fn(tx.objectStore('tiles'));
+        tx.oncomplete = () => res(req ? req.result : null);
+        tx.onerror = tx.onabort = () => res(null);
+      } catch (e) { res(null); }
+    });
+  }
+  async function getTile(key) {
+    let v = mem.get(key);
+    if (!v) { v = await idb('readonly', st => st.get(key)); if (v) mem.set(key, v); }
+    return v && Date.now() - v.t < MAX_AGE ? v : null;
+  }
+  function putTile(key, v) { mem.set(key, v); return idb('readwrite', st => { st.put(v, key); }); }
 
-  /**
-   * Fetch the highway ways (plus their nodes) around the polygon. Downloads a padded
-   * bounding box (much cheaper for Overpass than a polygon filter; buildGraph clips
-   * to the polygon anyway) and reuses an earlier download when it already covers the area.
-   */
-  async function fetchStreets(ring, onStatus) {
-    const need = boxOf(ring, 0);
-    const hit = cache.find(c => contains(c.box, need));
-    if (hit) { onStatus && onStatus('Using streets already downloaded…'); return hit.elements; }
+  /** Remember which server answered last and ask it first next time. */
+  function serverOrder() {
+    let best = null;
+    try { best = localStorage.getItem('raa:overpass'); } catch (e) { /* ignore */ }
+    return best && ENDPOINTS.includes(best) ? [best, ...ENDPOINTS.filter(u => u !== best)] : ENDPOINTS;
+  }
 
-    const box = boxOf(ring, PAD_M);
-    const bbox = [box.s, box.w, box.n, box.e].map(v => v.toFixed(6)).join(',');
+  async function overpass(box, onStatus, label) {
+    const bbox = [box.s, box.w, box.n, box.e].map(v => v.toFixed(5)).join(',');
     const query = `[out:json][timeout:25];way["highway"~"^(${WANTED})$"](${bbox});out body qt;>;out skel qt;`;
     let lastErr = null;
-    for (const url of ENDPOINTS) {
+    for (const url of serverOrder()) {
       const host = new URL(url).host;
       const ctrl = new AbortController();
       const t0 = Date.now();
-      const tick = setInterval(() => onStatus && onStatus(`Asking ${host} for streets… ${Math.round((Date.now() - t0) / 1000)} s`), 1000);
+      const say = () => onStatus && onStatus(`${label}: asking ${host}… ${Math.round((Date.now() - t0) / 1000)} s`);
+      say();
+      const tick = setInterval(say, 1000);
       const timer = setTimeout(() => ctrl.abort(), TRY_MS);
       try {
-        onStatus && onStatus(`Asking ${host} for streets…`);
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -70,8 +101,7 @@ window.RAA = window.RAA || {};
         const json = await res.json();
         if (!json.elements) throw new Error('Unexpected Overpass answer');
         if (json.remark && /timed out|runtime error/i.test(json.remark)) throw new Error(`${host}: ${json.remark}`);
-        cache.unshift({ box, elements: json.elements });
-        cache.length = Math.min(cache.length, 5);
+        try { localStorage.setItem('raa:overpass', url); } catch (e) { /* ignore */ }
         return json.elements;
       } catch (err) {
         lastErr = err.name === 'AbortError' ? new Error(`${host} did not answer within ${TRY_MS / 1000} s`) : err;
@@ -80,7 +110,74 @@ window.RAA = window.RAA || {};
         clearTimeout(timer); clearInterval(tick);
       }
     }
-    throw lastErr || new Error('All Overpass endpoints failed');
+    throw lastErr || new Error('All Overpass servers failed');
+  }
+
+  /** Split one download into its tiles: each tile keeps the ways with a node inside it, plus all their nodes. */
+  function splitIntoTiles(elements, tiles) {
+    const nodes = new Map();
+    for (const el of elements) if (el.type === 'node') nodes.set(el.id, el);
+    const out = new Map(tiles.map(([ty, tx]) => [tileKey(ty, tx), { ways: [], nodeIds: new Set() }]));
+    for (const w of elements) {
+      if (w.type !== 'way') continue;
+      const hit = new Set();
+      for (const id of w.nodes) {
+        const n = nodes.get(id);
+        if (n) hit.add(tileKey(Math.floor(n.lat / TILE_LAT), Math.floor(n.lon / TILE_LNG)));
+      }
+      for (const k of hit) {
+        const t = out.get(k);
+        if (!t) continue;
+        t.ways.push(w);
+        for (const id of w.nodes) t.nodeIds.add(id);
+      }
+    }
+    const now = Date.now();
+    return [...out].map(([k, t]) => [k, { t: now, elements: [...t.ways, ...[...t.nodeIds].map(id => nodes.get(id)).filter(Boolean)] }]);
+  }
+
+  /**
+   * Fetch the highway ways (plus their nodes) covering the polygon. Tiles already in the
+   * cache are reused; the missing ones are downloaded in small row-wise chunks, each
+   * saved as soon as it arrives, so a failure part-way loses nothing already fetched.
+   * Returns { elements, cached, downloaded, oldest }.
+   */
+  async function fetchStreets(ring, onStatus, opts = {}) {
+    const lats = ring.map(p => p.lat), lngs = ring.map(p => p.lng);
+    const y0 = Math.floor(Math.min(...lats) / TILE_LAT), y1 = Math.floor(Math.max(...lats) / TILE_LAT);
+    const x0 = Math.floor(Math.min(...lngs) / TILE_LNG), x1 = Math.floor(Math.max(...lngs) / TILE_LNG);
+    const have = new Map();
+    const runs = [];          // [[ty, tx], ...] contiguous missing tiles in one row
+    for (let ty = y0; ty <= y1; ty++) {
+      let run = null;
+      for (let tx = x0; tx <= x1; tx++) {
+        const v = opts.fresh ? null : await getTile(tileKey(ty, tx));
+        if (v) { have.set(tileKey(ty, tx), v); run = null; continue; }
+        if (!run || run.length >= RUN) runs.push(run = []);
+        run.push([ty, tx]);
+      }
+    }
+    const cached = have.size;
+    for (let i = 0; i < runs.length; i++) {
+      const run = runs[i];
+      const a = tileBox(...run[0]), b = tileBox(...run[run.length - 1]);
+      const label = runs.length > 1 ? `Part ${i + 1} of ${runs.length}` : 'Downloading';
+      let elements;
+      try {
+        elements = await overpass({ s: a.s, w: a.w, n: b.n, e: b.e }, onStatus, label);
+      } catch (err) {
+        if (i > 0) err.message += '. The parts already downloaded are saved, so fetching again only gets the rest.';
+        throw err;
+      }
+      for (const [k, v] of splitIntoTiles(elements, run)) { have.set(k, v); await putTile(k, v); }
+    }
+    const seen = new Set(), elements = [];
+    for (const v of have.values()) for (const el of v.elements) {
+      const k = el.type[0] + el.id;
+      if (!seen.has(k)) { seen.add(k); elements.push(el); }
+    }
+    const oldest = Math.min(...[...have.values()].map(v => v.t));
+    return { elements, cached, downloaded: have.size - cached, oldest };
   }
 
   function wayAllowed(tags, f) {

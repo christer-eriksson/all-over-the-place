@@ -18,6 +18,7 @@ then open http://localhost:8080. Opening `index.html` directly also works in mos
 
 - Draw the area with the mouse: rectangle or polygon (Enter to finish, Esc to cancel).
 - Streets come from the Overpass API; choose whether service roads, paths/trails, sidewalks and steps count.
+- Downloaded streets are saved in the browser (IndexedDB) in ~1 km tiles for 90 days, so a revisited, redrawn or enlarged area only downloads the tiles it is missing. ↻ forces a fresh copy.
 - Click a street for a menu: **Run it**, **Avoid** (covered once if it has to be, never used to double back) or **Block** (never run). Shift-click blocks or unblocks in one go.
 - Blocking a piece also drops anything it cuts off, such as the rest of a dead-end branch. These show as faded red and come back when you unblock.
 - **Cut a passage** makes a street impassable at one exact spot, for a fence, a closed gate or a section you don't want to run. Each side becomes a dead end, and you can block either side. Click the ⛔ marker to remove a cut.

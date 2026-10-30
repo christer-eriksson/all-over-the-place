@@ -214,8 +214,8 @@ window.RAA = window.RAA || {};
     if (ring) {
       L.polygon(ring, { color: C.area, weight: 1.5, dashArray: '6 6', fillColor: C.area, fillOpacity: 0.04, interactive: false }).addTo(areaLayer);
     }
-    $('btn-fetch').disabled = !ring;
-    $('area-info').textContent = ring ? `${ring.length}-point area marked. Fetch the streets when you're ready.` : 'No area yet.';
+    $('btn-fetch').disabled = !ring; $('btn-refetch').disabled = !ring;
+    $('area-info').textContent = ring ? `${ring.length}-point area marked. Load the streets when you're ready.` : 'No area yet.';
     save();
   }
 
@@ -552,24 +552,29 @@ window.RAA = window.RAA || {};
   const escapeHtml = s => String(s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 
   // ---------- Fetch ----------
-  async function fetchStreets() {
+  const ago = t => { const d = Math.floor((Date.now() - t) / 86400000); return d < 1 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`; };
+
+  async function fetchStreets(fresh) {
     if (!state.area) return;
     const btn = $('btn-fetch');
-    btn.disabled = true; btn.classList.add('loading');
+    btn.disabled = true; btn.classList.add('loading'); $('btn-refetch').disabled = true;
     const status = $('fetch-status');
-    status.textContent = 'Contacting Overpass…';
+    status.textContent = 'Looking for saved streets…';
     try {
-      const elements = await RAA.osm.fetchStreets(state.area, m => { status.textContent = m; });
-      state.elements = elements;
-      status.textContent = `Got ${elements.filter(e => e.type === 'way').length} ways · ${elements.filter(e => e.type === 'node').length} nodes from OpenStreetMap.`;
+      const r = await RAA.osm.fetchStreets(state.area, m => { status.textContent = m; }, { fresh: fresh === true });
+      state.elements = r.elements;
+      const ways = r.elements.filter(e => e.type === 'way').length;
+      status.textContent = !r.downloaded ? `${ways} ways, saved in this browser ${ago(r.oldest)}.`
+        : r.cached ? `${ways} ways: ${r.downloaded} new map tiles downloaded, ${r.cached} already saved.`
+        : `${ways} ways downloaded from OpenStreetMap and saved for next time.`;
       rebuild();
       if (state.start) setStart(state.start);
       toast('Streets loaded. Click a street to exclude it.', 'ok');
     } catch (err) {
-      status.textContent = 'Fetch failed: ' + err.message;
+      status.textContent = 'Could not load streets: ' + err.message;
       toast('Could not fetch streets: ' + err.message, 'warn');
     } finally {
-      btn.disabled = false; btn.classList.remove('loading');
+      btn.disabled = false; btn.classList.remove('loading'); $('btn-refetch').disabled = !state.area;
     }
   }
 
@@ -579,7 +584,8 @@ window.RAA = window.RAA || {};
     $('btn-poly').onclick = () => { setMode('exclude'); toast('Click corners, double-click or Enter to finish'); drawer.start('poly', ring => { setArea(ring); }); };
     // Clearing the area keeps your own paths, cuts, blocks and avoids for next time.
     $('btn-clear-area').onclick = () => { drawer.cancel(); setStart(null); setArea(null); state.elements = null; state.graph = { edges: [], nodePos: new Map() }; edgeLayer.clearLayers(); clearRoute(); $('fetch-status').textContent = ''; updateNetworkStats(null); rebuild(); };
-    $('btn-fetch').onclick = fetchStreets;
+    $('btn-fetch').onclick = () => fetchStreets();
+    $('btn-refetch').onclick = () => fetchStreets(true);
 
     for (const k of Object.keys(state.filters)) {
       const cb = $('f-' + k);
