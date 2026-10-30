@@ -65,6 +65,8 @@
       <div class="step-head"><span class="num">3</span><h2>Adjust the course</h2></div>
       <p class="hint">Click a street to run, avoid or block it. Shift-click blocks it straight away. A cut makes a street impassable at one spot.</p>
       <label class="switch"><input type="checkbox" id="t-deadends" checked><span class="track"></span> Include dead-end streets</label>
+      <label class="switch"><input type="checkbox" id="t-mypaths" checked><span class="track"></span> Use my own paths</label>
+      <label class="switch"><input type="checkbox" id="t-mycuts" checked><span class="track"></span> Use my cuts</label>
       <div class="btn-row">
         <button id="btn-path" class="btn">Draw my own path</button>
         <button id="btn-clear-paths" class="btn ghost" title="Remove all custom paths" aria-label="Remove all custom paths">×</button>
@@ -149,7 +151,7 @@
       <li><b>Plan the route.</b> This solves the route inspection problem, also called the Chinese Postman Problem. It pairs up corners with an odd number of streets along the cheapest connections, runs those streets twice, and traces one continuous loop.</li>
       <li><b>Export</b> a GPX or TCX file and import it as a course in Garmin Connect.</li>
     </ol>
-    <p class="small muted">While drawing, press <kbd>Enter</kbd> to finish, <kbd>Backspace</kbd> to undo a point and <kbd>Esc</kbd> to cancel. Everything you set is remembered in this browser.</p>
+    <p class="small muted">While drawing, press <kbd>Enter</kbd> to finish, <kbd>Backspace</kbd> to undo a point and <kbd>Esc</kbd> to cancel. Everything you set is remembered in this browser. Your own paths and cuts are kept when you clear or move the area, and are used wherever they fall inside it.</p>
   </div>
 </div>
 

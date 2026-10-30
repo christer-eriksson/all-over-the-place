@@ -180,6 +180,7 @@ body.panel-collapsed .legend { left: 12px; max-width: calc(100% - 90px); }
   display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--blocked); border: 2px solid #fff;
   box-shadow: 0 1px 4px rgba(0,0,0,.3); position: relative; cursor: pointer;
 }
+.barrier-pin.off span { opacity: .45; filter: grayscale(.6); }
 .barrier-pin span::after { content: ''; position: absolute; left: 3px; right: 3px; top: 50%; height: 2px; margin-top: -1px; background: #fff; border-radius: 1px; }
 
 .leaflet-tooltip.edge-tip { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; box-shadow: var(--shadow); padding: 4px 8px; }

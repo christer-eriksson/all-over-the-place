@@ -20,6 +20,8 @@ window.RAA = window.RAA || {};
     avoidKeys: new Set(),    // avoided streets: run once if needed, never repeated as a connector
     barriers: [],            // [{id, lat, lng}] spots where a street is impassable
     includeDeadEnds: true,
+    useMyPaths: true,        // apply the saved custom paths
+    useMyCuts: true,         // apply the saved cuts
     filters: { service: true, trails: true, sidewalks: false, steps: false },
     start: null,           // {lat,lng}
     pace: '5:30',
@@ -71,6 +73,7 @@ window.RAA = window.RAA || {};
   const edgeLayer = L.layerGroup().addTo(map);
   const routeLayer = L.layerGroup().addTo(map);
   const barrierLayer = L.layerGroup().addTo(map);
+  const savedLayer = L.layerGroup().addTo(map);   // saved paths that aren't part of the street graph right now
   let startMarker = null;
 
   // ---------- Mouse drawing (rectangle / polygon / polyline) ----------
@@ -178,7 +181,7 @@ window.RAA = window.RAA || {};
       localStorage.setItem(STORE_KEY, JSON.stringify({
         area: state.area, customPaths: state.customPaths, excludedKeys: [...state.excludedKeys],
         avoidKeys: [...state.avoidKeys], barriers: state.barriers,
-        includeDeadEnds: state.includeDeadEnds, filters: state.filters, start: state.start, pace: state.pace,
+        includeDeadEnds: state.includeDeadEnds, useMyPaths: state.useMyPaths, useMyCuts: state.useMyCuts, filters: state.filters, start: state.start, pace: state.pace,
         view: { lat: c.lat, lng: c.lng, zoom: map.getZoom() },
       }));
     } catch (e) { /* ignore */ }
@@ -194,6 +197,8 @@ window.RAA = window.RAA || {};
       state.avoidKeys = new Set(s.avoidKeys || []);
       state.barriers = s.barriers || [];
       state.includeDeadEnds = s.includeDeadEnds !== false;
+      state.useMyPaths = s.useMyPaths !== false;
+      state.useMyCuts = s.useMyCuts !== false;
       Object.assign(state.filters, s.filters || {});
       state.start = s.start || null;
       state.pace = s.pace || '5:30';
@@ -215,13 +220,16 @@ window.RAA = window.RAA || {};
   }
 
   // ---------- Graph pipeline ----------
+  const touchesArea = cp => state.area && cp.latlngs.some(p => RAA.osm.pointInPolygon(p, state.area));
+
   function rebuild() {
-    if (!state.elements || !state.area) return;
+    if (!state.elements || !state.area) { drawBarriers(); drawSaved(); save(); return; }
     const g = RAA.osm.buildGraph(state.elements, state.area, state.filters);
     state.graph = g;
-    for (const cp of state.customPaths) RAA.osm.addCustomPath(g, cp, SNAP_M);
+    if (state.useMyPaths) for (const cp of state.customPaths) if (touchesArea(cp)) RAA.osm.addCustomPath(g, cp, SNAP_M);
     g.joins = [];
     for (const b of state.barriers) {
+      if (!state.useMyCuts) { b.missed = false; continue; }
       const pair = RAA.osm.cutAt(g, b, BARRIER_M, b.id);
       b.missed = !pair;
       if (pair) g.joins.push(pair);
@@ -229,6 +237,7 @@ window.RAA = window.RAA || {};
     const has = (set, e) => set.has(e.key) || (e.origKey != null && set.has(e.origKey));
     for (const e of g.edges) { e.excluded = has(state.excludedKeys, e); e.avoid = !e.excluded && has(state.avoidKeys, e); }
     drawBarriers();
+    drawSaved();
     refresh();
   }
 
@@ -367,13 +376,39 @@ window.RAA = window.RAA || {};
     barrierLayer.clearLayers();
     for (const b of state.barriers) {
       if (b.missed) continue;
+      const off = !state.useMyCuts;
       const m = L.marker([b.lat, b.lng], {
-        icon: L.divIcon({ className: 'barrier-pin', html: '<span></span>', iconSize: [18, 18], iconAnchor: [9, 9] }),
+        icon: L.divIcon({ className: 'barrier-pin' + (off ? ' off' : ''), html: '<span></span>', iconSize: [18, 18], iconAnchor: [9, 9] }),
         zIndexOffset: 500,
       });
-      m.bindTooltip('Impassable here · click to remove', { direction: 'top', offset: [0, -10] });
+      m.bindTooltip(off ? 'Saved cut, switched off · click to remove' : 'Impassable here · click to remove', { direction: 'top', offset: [0, -10] });
       m.on('click', ev => { L.DomEvent.stop(ev); if (!drawer.busy) removeBarrier(b.id); });
       m.addTo(barrierLayer);
+    }
+  }
+
+  /** Saved paths that aren't in the street graph (streets not loaded, outside the area, or switched off). */
+  function drawSaved() {
+    savedLayer.clearLayers();
+    const inGraph = new Set(state.graph.edges.filter(e => e.custom).map(e => e.customId));
+    for (const cp of state.customPaths) {
+      if (inGraph.has(cp.id)) continue;
+      const why = !state.useMyPaths ? 'switched off'
+        : !state.elements ? 'used once the streets are loaded'
+        : touchesArea(cp) ? 'not connected to any street' : 'outside the area';
+      const line = L.polyline(cp.latlngs, { renderer: canvas, color: C.mine, weight: 3, opacity: 0.55, dashArray: '6 6' });
+      line.bindTooltip(`My path (saved) · ${why}`, { sticky: true, className: 'edge-tip' });
+      line.bindPopup(() => {
+        const el = L.DomUtil.create('div', 'edge-menu');
+        el.innerHTML = `<div class="menu-title">My path (saved) · ${why}</div><div class="menu-row"><button data-act="remove">Remove path</button></div>`;
+        el.querySelector('button').onclick = () => {
+          map.closePopup();
+          state.customPaths = state.customPaths.filter(x => x.id !== cp.id);
+          rebuild(); toast('Custom path removed');
+        };
+        return el;
+      }, { className: 'menu-popup', closeButton: false });
+      line.addTo(savedLayer);
     }
   }
 
@@ -389,7 +424,8 @@ window.RAA = window.RAA || {};
     $('net-dead-k').textContent = `Dead ends (${deadEnds.length})`;
     $('net-excluded').textContent = edges.filter(e => e.excluded).length;
     $('net-avoid').textContent = edges.filter(e => e.avoid && !e.excluded).length;
-    $('net-custom').textContent = state.customPaths.length;
+    const used = new Set(edges.filter(e => e.custom).map(e => e.customId)).size;
+    $('net-custom').textContent = state.customPaths.length && used < state.customPaths.length ? `${used} of ${state.customPaths.length}` : state.customPaths.length;
     const warn = $('net-warn');
     if (comp && comp.components > 1) {
       warn.textContent = `${comp.components - 1} disconnected piece(s) (${fmtKm(comp.droppedLen)}) are greyed out and will be skipped. Connect them with a custom path or extend the area.`;
@@ -541,7 +577,8 @@ window.RAA = window.RAA || {};
   function wire() {
     $('btn-rect').onclick = () => { setMode('exclude'); toast('Drag a rectangle on the map'); drawer.start('rect', ring => { setArea(ring); }); };
     $('btn-poly').onclick = () => { setMode('exclude'); toast('Click corners, double-click or Enter to finish'); drawer.start('poly', ring => { setArea(ring); }); };
-    $('btn-clear-area').onclick = () => { drawer.cancel(); state.customPaths = []; state.excludedKeys.clear(); state.avoidKeys.clear(); state.barriers = []; barrierLayer.clearLayers(); setStart(null); setArea(null); state.elements = null; state.graph = { edges: [], nodePos: new Map() }; edgeLayer.clearLayers(); clearRoute(); $('fetch-status').textContent = ''; updateNetworkStats(null); };
+    // Clearing the area keeps your own paths, cuts, blocks and avoids for next time.
+    $('btn-clear-area').onclick = () => { drawer.cancel(); setStart(null); setArea(null); state.elements = null; state.graph = { edges: [], nodePos: new Map() }; edgeLayer.clearLayers(); clearRoute(); $('fetch-status').textContent = ''; updateNetworkStats(null); rebuild(); };
     $('btn-fetch').onclick = fetchStreets;
 
     for (const k of Object.keys(state.filters)) {
@@ -552,6 +589,10 @@ window.RAA = window.RAA || {};
     const de = $('t-deadends');
     de.checked = state.includeDeadEnds;
     de.onchange = () => { state.includeDeadEnds = de.checked; refresh(); };
+    const mp = $('t-mypaths'), mc = $('t-mycuts');
+    mp.checked = state.useMyPaths; mc.checked = state.useMyCuts;
+    mp.onchange = () => { state.useMyPaths = mp.checked; rebuild(); };
+    mc.onchange = () => { state.useMyCuts = mc.checked; rebuild(); };
 
     $('btn-path').onclick = () => {
       setMode('exclude');
@@ -559,8 +600,9 @@ window.RAA = window.RAA || {};
       drawer.start('line', pts => {
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
         state.customPaths.push({ id, latlngs: pts });
+        if (!state.useMyPaths) { state.useMyPaths = true; $('t-mypaths').checked = true; }
         rebuild();
-        if (state.elements && !state.graph.edges.some(e => e.customId === id)) {
+        if (state.elements && touchesArea({ latlngs: pts }) && !state.graph.edges.some(e => e.customId === id)) {
           state.customPaths = state.customPaths.filter(cp => cp.id !== id);
           rebuild();
           toast('Path too short: both ends snap to the same spot', 'warn');
@@ -569,15 +611,20 @@ window.RAA = window.RAA || {};
         toast('Custom path added', 'ok');
       });
     };
-    $('btn-clear-paths').onclick = () => { if (!state.customPaths.length) return; state.customPaths = []; rebuild(); toast('All custom paths removed'); };
+    $('btn-clear-paths').onclick = () => {
+      if (!state.customPaths.length) return;
+      if (!confirm(`Delete all ${state.customPaths.length} of your own paths? This can't be undone.`)) return;
+      state.customPaths = []; rebuild(); toast('All custom paths removed');
+    };
     $('btn-reset-excl').onclick = () => {
       state.excludedKeys.clear(); state.avoidKeys.clear(); state.barriers = [];
-      if (state.elements) rebuild(); else { barrierLayer.clearLayers(); save(); }
+      rebuild();
       toast('All blocks, avoids and cuts removed');
     };
     $('btn-cut').onclick = () => {
       if (state.mode === 'cut') { setMode('exclude'); return; }
       if (!state.elements) { toast('Load the streets first', 'warn'); return; }
+      if (!state.useMyCuts) { state.useMyCuts = true; $('t-mycuts').checked = true; rebuild(); }
       setMode('cut');
       toast('Click the exact spot on a street where it can\'t be passed');
     };
@@ -633,7 +680,8 @@ window.RAA = window.RAA || {};
     if (state.area) {
       setArea(state.area);
       if (state.start) setStart(state.start);
-      $('area-info').textContent += ' (restored from your last visit)';
+      $('area-info').textContent = 'Area restored from your last visit.';
+      fetchStreets();
     } else {
       setArea(null);
       if (!restored && navigator.geolocation) {
@@ -641,6 +689,7 @@ window.RAA = window.RAA || {};
       }
     }
     drawBarriers();
+    drawSaved();
     updateNetworkStats(null);
   }
 
