@@ -7,10 +7,9 @@ window.RAA = window.RAA || {};
 (function (RAA) {
   'use strict';
 
+  // kumi.systems and private.coffee were dropped: they stopped answering at all (tested Oct 2026).
   const ENDPOINTS = [
     'https://overpass-api.de/api/interpreter',
-    'https://overpass.kumi.systems/api/interpreter',
-    'https://overpass.private.coffee/api/interpreter',
     'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
   ];
 
@@ -28,8 +27,10 @@ window.RAA = window.RAA || {};
 
     // Every highway type any filter combination can use, so filters can change without a refetch.
   const WANTED = [...ROADS, ...TRAILS, ...SERVICE, ...STEPS].join('|');
-  const TRY_MS = 30000;       // give up on one server after this and try the next
-  const RUN = 4;              // at most this many tiles side by side in one request
+  const HEDGE_MS = 20000;     // no answer yet: also ask the next server, keep waiting for both
+  const MAX_MS = 120000;      // give up on a request entirely after this
+  const RUN = 2;              // at most this many tiles side by side in one request
+  const RETRY_WAIT = [5, 15];  // seconds to wait before the 2nd and 3rd attempt
 
   // ---------- Tile cache ----------
   // Streets are downloaded in fixed tiles of about 1 x 1 km and kept in IndexedDB, so a
@@ -78,39 +79,61 @@ window.RAA = window.RAA || {};
     return best && ENDPOINTS.includes(best) ? [best, ...ENDPOINTS.filter(u => u !== best)] : ENDPOINTS;
   }
 
-  async function overpass(box, onStatus, label) {
+  /**
+   * Ask the servers for one box. A slow server is not abandoned: after HEDGE_MS the next
+   * server is asked as well, the first good answer wins and the others are cancelled.
+   * A server that fails outright hands over to the next one at once.
+   */
+  function overpass(box, onStatus, label) {
     const bbox = [box.s, box.w, box.n, box.e].map(v => v.toFixed(5)).join(',');
-    const query = `[out:json][timeout:25];way["highway"~"^(${WANTED})$"](${bbox});out body qt;>;out skel qt;`;
-    let lastErr = null;
-    for (const url of serverOrder()) {
-      const host = new URL(url).host;
-      const ctrl = new AbortController();
+    const query = `[out:json][timeout:90];way["highway"~"^(${WANTED})$"](${bbox});out body qt;>;out skel qt;`;
+    const servers = serverOrder();
+    const host = u => new URL(u).host;
+    return new Promise((resolve, reject) => {
       const t0 = Date.now();
-      const say = () => onStatus && onStatus(`${label}: asking ${host}… ${Math.round((Date.now() - t0) / 1000)} s`);
-      say();
+      const ctrls = [], errors = [], asking = new Set();
+      let next = 0, done = false, hedge = null;
+      const say = () => onStatus && onStatus(`${label}: waiting for ${[...asking].map(host).join(' and ') || 'servers'}… ${Math.round((Date.now() - t0) / 1000)} s`);
       const tick = setInterval(say, 1000);
-      const timer = setTimeout(() => ctrl.abort(), TRY_MS);
-      try {
-        const res = await fetch(url, {
+      const finish = (err, data) => {
+        if (done) return;
+        done = true; clearInterval(tick); clearTimeout(hedge); clearTimeout(cap);
+        ctrls.forEach(c => c.abort());
+        err ? reject(err) : resolve(data);
+      };
+      const cap = setTimeout(() => finish(Object.assign(new Error(`No server answered within ${MAX_MS / 1000} s (${[...asking].map(host).join(', ')} still busy). Try a smaller area or again in a minute.`), { final: true })), MAX_MS);
+      const launch = () => {
+        clearTimeout(hedge);
+        if (next >= servers.length) {
+          if (!asking.size) finish(new Error(errors.join(' · ') || 'All Overpass servers failed'));
+          return;
+        }
+        const url = servers[next++];
+        const ctrl = new AbortController();
+        ctrls.push(ctrl); asking.add(url); say();
+        hedge = setTimeout(launch, HEDGE_MS);
+        fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: 'data=' + encodeURIComponent(query),
           signal: ctrl.signal,
+        }).then(async res => {
+          if (!res.ok) throw new Error(res.status === 429 ? 'busy (too many requests)' : res.status === 504 ? 'overloaded (HTTP 504)' : `HTTP ${res.status}`);
+          const json = await res.json();
+          if (!json.elements) throw new Error('unexpected answer');
+          if (json.remark && /timed out|runtime error|out of memory/i.test(json.remark)) throw new Error('overloaded (' + json.remark.replace(/^.*error:\s*/i, '').slice(0, 60) + ')');
+          try { localStorage.setItem('raa:overpass', url); } catch (e) { /* ignore */ }
+          finish(null, json.elements);
+        }).catch(err => {
+          if (done) return;
+          console.warn('Overpass server failed', url, err);
+          asking.delete(url);
+          errors.push(`${host(url)}: ${err.name === 'TypeError' ? 'network error' : err.message}`);
+          launch();
         });
-        if (!res.ok) throw new Error(res.status === 429 ? `${host} is busy (too many requests)` : `${host} answered HTTP ${res.status}`);
-        const json = await res.json();
-        if (!json.elements) throw new Error('Unexpected Overpass answer');
-        if (json.remark && /timed out|runtime error/i.test(json.remark)) throw new Error(`${host}: ${json.remark}`);
-        try { localStorage.setItem('raa:overpass', url); } catch (e) { /* ignore */ }
-        return json.elements;
-      } catch (err) {
-        lastErr = err.name === 'AbortError' ? new Error(`${host} did not answer within ${TRY_MS / 1000} s`) : err;
-        console.warn('Overpass endpoint failed', url, err);
-      } finally {
-        clearTimeout(timer); clearInterval(tick);
-      }
-    }
-    throw lastErr || new Error('All Overpass servers failed');
+      };
+      launch();
+    });
   }
 
   /** Split one download into its tiles: each tile keeps the ways with a node inside it, plus all their nodes. */
@@ -163,11 +186,22 @@ window.RAA = window.RAA || {};
       const a = tileBox(...run[0]), b = tileBox(...run[run.length - 1]);
       const label = runs.length > 1 ? `Part ${i + 1} of ${runs.length}` : 'Downloading';
       let elements;
-      try {
-        elements = await overpass({ s: a.s, w: a.w, n: b.n, e: b.e }, onStatus, label);
-      } catch (err) {
-        if (i > 0) err.message += '. The parts already downloaded are saved, so fetching again only gets the rest.';
-        throw err;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          elements = await overpass({ s: a.s, w: a.w, n: b.n, e: b.e }, onStatus, label);
+          break;
+        } catch (err) {
+          // Busy servers usually recover within seconds: wait a little and try again.
+          if (attempt < RETRY_WAIT.length && !err.final) {
+            for (let w = RETRY_WAIT[attempt]; w > 0; w--) {
+              onStatus && onStatus(`${label}: servers busy, trying again in ${w} s…`);
+              await new Promise(r => setTimeout(r, 1000));
+            }
+            continue;
+          }
+          if (i > 0) err.message += '. The parts already downloaded are saved, so loading again only gets the rest.';
+          throw err;
+        }
       }
       for (const [k, v] of splitIntoTiles(elements, run)) { have.set(k, v); await putTile(k, v); }
     }
