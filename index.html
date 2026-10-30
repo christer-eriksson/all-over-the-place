@@ -4,26 +4,34 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Run All Around</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Crect width=%2764%27 height=%2764%27 rx=%2714%27 fill=%27%230b0f1a%27/%3E%3Ctext x=%2732%27 y=%2744%27 font-size=%2736%27 text-anchor=%27middle%27%3E🏃%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23e2583e'/%3E%3Cpath d='M9 21c0-6 3-10 7-10s7 3 7 6-2 5-5 5-4-2-4-4 1-3 3-3' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body data-mode="exclude">
 
 <header class="topbar">
-  <button id="btn-panel" class="icon-btn" title="Toggle panel">☰</button>
+  <button id="btn-panel" class="icon-btn" title="Show or hide the panel" aria-label="Toggle panel">
+    <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
   <div class="brand">
-    <span class="brand-icon">🏃</span>
-    <h1>RUN <em>ALL</em> AROUND</h1>
-    <span class="tagline">every street · once · shortest loop</span>
+    <span class="logo" aria-hidden="true">
+      <svg viewBox="0 0 32 32"><path d="M9 21c0-6 3-10 7-10s7 3 7 6-2 5-5 5-4-2-4-4 1-3 3-3"/></svg>
+    </span>
+    <h1>Run All Around</h1>
+    <span class="tagline">Every street, one loop</span>
   </div>
   <div class="topbar-right">
-    <label class="pace">Pace <input id="pace" value="5:30" size="4" title="min/km"> <small>min/km</small></label>
-    <button id="btn-fit" class="icon-btn" title="Zoom to area">⌖</button>
-    <button id="btn-help" class="icon-btn" title="How does this work?">?</button>
+    <label class="pace">Pace <input id="pace" value="5:30" size="4" title="Minutes per kilometre"> <small>/km</small></label>
+    <button id="btn-fit" class="icon-btn" title="Zoom to area" aria-label="Zoom to area">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="6"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+    </button>
+    <button id="btn-help" class="icon-btn" title="How it works" aria-label="How it works">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.4M12 17h.01"/></svg>
+    </button>
   </div>
 </header>
 
@@ -31,117 +39,121 @@
   <aside class="panel">
 
     <section class="step ready" id="step-area">
-      <div class="step-head"><span class="bib">1</span><h2>Mark your turf</h2></div>
-      <p class="hint">Draw the area you want to conquer. Every street inside it goes on the list.</p>
+      <div class="step-head"><span class="num">1</span><h2>Choose an area</h2></div>
+      <p class="hint">Draw the area you want to cover. Every street inside it goes on the list.</p>
       <div class="btn-row">
-        <button id="btn-rect" class="btn">▭ Rectangle</button>
-        <button id="btn-poly" class="btn">⬠ Polygon</button>
-        <button id="btn-clear-area" class="btn ghost">✕</button>
+        <button id="btn-rect" class="btn">Rectangle</button>
+        <button id="btn-poly" class="btn">Polygon</button>
+        <button id="btn-clear-area" class="btn ghost" title="Clear area" aria-label="Clear area">×</button>
       </div>
       <p id="area-info" class="small muted">No area yet.</p>
     </section>
 
     <section class="step ready" id="step-fetch">
-      <div class="step-head"><span class="bib">2</span><h2>Load the streets</h2></div>
+      <div class="step-head"><span class="num">2</span><h2>Load streets</h2></div>
       <div class="checks">
         <label><input type="checkbox" id="f-service"> Service roads</label>
         <label><input type="checkbox" id="f-trails"> Paths &amp; trails</label>
         <label><input type="checkbox" id="f-sidewalks"> Sidewalks</label>
         <label><input type="checkbox" id="f-steps"> Steps</label>
       </div>
-      <button id="btn-fetch" class="btn primary" disabled>⤓ Fetch from OpenStreetMap</button>
+      <button id="btn-fetch" class="btn primary" disabled>Fetch from OpenStreetMap</button>
       <p id="fetch-status" class="small muted"></p>
     </section>
 
     <section class="step" id="step-tune">
-      <div class="step-head"><span class="bib">3</span><h2>Tune the course</h2></div>
-      <p class="hint">Click a street to <b>run</b>, <b>avoid</b> or <b>block</b> it. Shift-click blocks in one go. Use <b>Cut</b> to make a street impassable at one exact spot.</p>
+      <div class="step-head"><span class="num">3</span><h2>Adjust the course</h2></div>
+      <p class="hint">Click a street to run, avoid or block it. Shift-click blocks it straight away. A cut makes a street impassable at one spot.</p>
       <label class="switch"><input type="checkbox" id="t-deadends" checked><span class="track"></span> Include dead-end streets</label>
       <div class="btn-row">
-        <button id="btn-path" class="btn magenta">✎ Draw my own path</button>
-        <button id="btn-clear-paths" class="btn ghost" title="Remove all custom paths">✕</button>
+        <button id="btn-path" class="btn">Draw my own path</button>
+        <button id="btn-clear-paths" class="btn ghost" title="Remove all custom paths" aria-label="Remove all custom paths">×</button>
       </div>
       <div class="btn-row">
-        <button id="btn-start" class="btn">🏁 Set start point</button>
-        <button id="btn-clear-start" class="btn ghost" title="Remove start point">✕</button>
+        <button id="btn-start" class="btn">Set start point</button>
+        <button id="btn-clear-start" class="btn ghost" title="Remove start point" aria-label="Remove start point">×</button>
       </div>
       <div class="btn-row">
-        <button id="btn-cut" class="btn">✂ Cut a passage</button>
-        <button id="btn-reset-excl" class="btn ghost" title="Remove all blocks, avoids and cuts">↺</button>
+        <button id="btn-cut" class="btn">Cut a passage</button>
+        <button id="btn-reset-excl" class="btn ghost" title="Remove all blocks, avoids and cuts" aria-label="Reset blocks, avoids and cuts">↺</button>
       </div>
-      <div class="stat-grid small-tiles">
-        <div class="tile"><span class="v" id="net-streets">–</span><span class="k">streets</span></div>
-        <div class="tile"><span class="v" id="net-km">–</span><span class="k">to cover</span></div>
-        <div class="tile"><span class="v" id="net-dead">–</span><span class="k">dead ends</span></div>
-        <div class="tile"><span class="v" id="net-excluded">–</span><span class="k">blocked</span></div>
-        <div class="tile"><span class="v" id="net-avoid">–</span><span class="k">avoided</span></div>
-        <div class="tile"><span class="v" id="net-custom">–</span><span class="k">own paths</span></div>
-      </div>
+      <dl class="facts">
+        <div><dt>Streets</dt><dd id="net-streets">–</dd></div>
+        <div><dt>To cover</dt><dd id="net-km">–</dd></div>
+        <div><dt id="net-dead-k">Dead ends</dt><dd id="net-dead">–</dd></div>
+        <div><dt>Blocked</dt><dd id="net-excluded">–</dd></div>
+        <div><dt>Avoided</dt><dd id="net-avoid">–</dd></div>
+        <div><dt>Own paths</dt><dd id="net-custom">–</dd></div>
+      </dl>
       <p id="net-warn" class="warn" hidden></p>
       <p id="net-cut" class="note" hidden></p>
     </section>
 
     <section class="step" id="step-route">
-      <div class="step-head"><span class="bib">4</span><h2>Plot the run</h2></div>
-      <p class="hint">Solves the Chinese Postman Problem: one loop that runs every street at least once with the least repetition.</p>
-      <button id="btn-route" class="btn go" disabled>GO! Compute route</button>
+      <div class="step-head"><span class="num">4</span><h2>Plan the route</h2></div>
+      <p class="hint">Finds the shortest loop that runs every street at least once.</p>
+      <button id="btn-route" class="btn primary go" disabled>Plan route</button>
       <div id="route-stats" hidden>
-        <div class="stat-grid">
-          <div class="tile big"><span class="v" id="rs-route">–</span><span class="k">total run</span></div>
-          <div class="tile big"><span class="v" id="rs-time">–</span><span class="k">est. time</span></div>
-          <div class="tile"><span class="v" id="rs-streets">–</span><span class="k">streets</span></div>
-          <div class="tile"><span class="v" id="rs-extra">–</span><span class="k">repeated</span></div>
-          <div class="tile"><span class="v" id="rs-odd">–</span><span class="k">odd corners</span></div>
+        <div class="headline">
+          <div><span class="v" id="rs-route">–</span><span class="k">Total distance</span></div>
+          <div><span class="v" id="rs-time">–</span><span class="k">Estimated time</span></div>
         </div>
+        <dl class="facts three">
+          <div><dt>Streets</dt><dd id="rs-streets">–</dd></div>
+          <div><dt id="rs-extra-k">Repeated</dt><dd id="rs-extra">–</dd></div>
+          <div><dt>Odd corners</dt><dd id="rs-odd">–</dd></div>
+        </dl>
         <div class="cue-head"><h3>Cue sheet</h3><span id="cue-count" class="small muted"></span></div>
         <ol id="cue"></ol>
       </div>
     </section>
 
     <section class="step ready" id="step-export">
-      <div class="step-head"><span class="bib">5</span><h2>Take it with you</h2></div>
-      <input id="gpx-name" class="text" value="Run All Around" placeholder="Course name">
-      <label class="check-line"><input type="checkbox" id="x-ele" checked> Add elevation (Open-Meteo)</label>
+      <div class="step-head"><span class="num">5</span><h2>Export</h2></div>
+      <input id="gpx-name" class="text" value="Run All Around" placeholder="Course name" aria-label="Course name">
+      <label class="check-line"><input type="checkbox" id="x-ele" checked> Add elevation</label>
       <div class="btn-row">
-        <button id="btn-gpx" class="btn primary" disabled>⤓ GPX</button>
-        <button id="btn-tcx" class="btn" disabled>⤓ TCX</button>
+        <button id="btn-gpx" class="btn primary" disabled>Download GPX</button>
+        <button id="btn-tcx" class="btn" disabled>TCX</button>
       </div>
       <p id="export-status" class="small muted"></p>
-      <p class="small muted">Garmin Connect → Training &amp; Planning → Courses → Import. If GPX fails, try the TCX.</p>
+      <p class="small muted">In Garmin Connect, go to Training &amp; Planning, then Courses, then Import. If the GPX fails, try the TCX.</p>
     </section>
 
-    <footer class="credits">Street data © OpenStreetMap contributors · Routing runs entirely in your browser.</footer>
+    <footer class="credits">Street data © OpenStreetMap contributors. Routing runs in your browser.</footer>
   </aside>
 
   <main id="map"></main>
 
   <div class="legend">
-    <div><i style="background:#38bdf8"></i>street</div>
-    <div><i class="dash" style="background:#38bdf8"></i>dead end</div>
-    <div><i class="dash" style="background:#ff3b5c"></i>blocked</div>
-    <div><i class="dash" style="background:#f59e0b"></i>avoid</div>
-    <div><i style="background:#e879f9"></i>my path</div>
-    <div><i style="background:#c6ff00"></i>route</div>
-    <div><i style="background:#ff8c42"></i>run twice</div>
+    <div><i class="sw street"></i>Street</div>
+    <div><i class="sw street dash"></i>Dead end</div>
+    <div><i class="sw blocked dash"></i>Blocked</div>
+    <div><i class="sw avoid dash"></i>Avoid</div>
+    <div><i class="sw mine"></i>My path</div>
+    <div><i class="sw route"></i>Route</div>
+    <div><i class="sw twice"></i>Run twice</div>
   </div>
 </div>
 
 <div id="help">
   <div class="help-card">
-    <button id="help-close" class="icon-btn">✕</button>
+    <button id="help-close" class="icon-btn" aria-label="Close">
+      <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
     <h2>How it works</h2>
     <ol>
-      <li><b>Mark your turf</b> with a rectangle or polygon.</li>
-      <li><b>Fetch</b> pulls every walkable way inside it from OpenStreetMap (via the Overpass API).</li>
-      <li><b>Tune:</b> click a street to choose <i>Run it</i>, <i>Avoid</i> (covered once if needed, never run twice) or <i>Block</i> (never run). Blocking a piece also drops anything it cuts off, such as the rest of a dead-end branch. <i>Cut here</i> makes a street impassable at one spot, so you can block just part of it. Toggle dead ends, draw your own shortcuts (ends snap to the nearest street within 30 m) and pick a start.</li>
-      <li><b>GO!</b> solves the <i>Chinese Postman Problem</i> (route inspection): it finds the shortest closed loop that covers every street at least once. Corners with an odd number of streets are paired up along the cheapest connections, those streets are run twice (orange), then an Euler circuit is traced.</li>
-      <li><b>Download GPX</b> and import it as a course in Garmin Connect, then send it to your watch.</li>
+      <li><b>Choose an area</b> with a rectangle or polygon.</li>
+      <li><b>Load streets</b> pulls every walkable way inside it from OpenStreetMap.</li>
+      <li><b>Adjust the course.</b> Click a street to run, avoid or block it. Avoided streets are covered once if needed but never repeated. Blocking a piece also drops anything it cuts off, such as the rest of a dead end. A cut makes a street impassable at one spot. You can also draw your own paths, whose ends snap to streets within 30 m, and pick a start.</li>
+      <li><b>Plan the route.</b> This solves the route inspection problem, also called the Chinese Postman Problem. It pairs up corners with an odd number of streets along the cheapest connections, runs those streets twice, and traces one continuous loop.</li>
+      <li><b>Export</b> a GPX or TCX file and import it as a course in Garmin Connect.</li>
     </ol>
-    <p class="small muted">Keyboard while drawing: <kbd>Enter</kbd> finish · <kbd>Backspace</kbd> undo point · <kbd>Esc</kbd> cancel. Your area, exclusions and paths are remembered in this browser.</p>
+    <p class="small muted">While drawing, press <kbd>Enter</kbd> to finish, <kbd>Backspace</kbd> to undo a point and <kbd>Esc</kbd> to cancel. Everything you set is remembered in this browser.</p>
   </div>
 </div>
 
-<div id="toast"></div>
+<div id="toast" role="status"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script src="js/graph.js"></script>

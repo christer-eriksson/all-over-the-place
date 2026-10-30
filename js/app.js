@@ -4,6 +4,10 @@ window.RAA = window.RAA || {};
   'use strict';
 
   const SNAP_M = 30;
+  const C = {
+    street: '#4a6fa5', blocked: '#c0504d', avoid: '#b9852a', mine: '#7b5ea7', muted: '#9aa0aa',
+    route: '#e2583e', area: '#3d4a5c',
+  };
   const BARRIER_M = 25;
   const STORE_KEY = 'raa:state:v1';
 
@@ -53,13 +57,13 @@ window.RAA = window.RAA || {};
   L.control.zoom({ position: 'bottomright' }).addTo(map);
   const osmAttr = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
   // "Night run": plain OSM tiles darkened with a CSS filter (no API key needed)
+  const light = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: osmAttr, maxZoom: 19, className: 'soft-tiles' });
   const dark = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: osmAttr, maxZoom: 19, className: 'night-tiles' });
-  const streets = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: osmAttr, maxZoom: 19 });
   const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     attribution: 'Tiles &copy; Esri', maxZoom: 19,
   });
-  dark.addTo(map);
-  L.control.layers({ 'Night run': dark, 'Streets': streets, 'Satellite': sat }, null, { position: 'bottomright' }).addTo(map);
+  light.addTo(map);
+  L.control.layers({ 'Light': light, 'Dark': dark, 'Satellite': sat }, null, { position: 'bottomright' }).addTo(map);
 
   const canvas = L.canvas({ padding: 0.5 });
   const svg = L.svg({ padding: 0.5 });
@@ -95,8 +99,8 @@ window.RAA = window.RAA || {};
     }
     _style() {
       return this.active.kind === 'line'
-        ? { color: '#e879f9', weight: 4, dashArray: '6 6' }
-        : { color: '#c6ff00', weight: 2, dashArray: '8 6', fillColor: '#c6ff00', fillOpacity: 0.08 };
+        ? { color: C.mine, weight: 4, dashArray: '6 6' }
+        : { color: C.area, weight: 2, dashArray: '6 6', fillColor: C.area, fillOpacity: 0.06 };
     }
     _rectDown(e) {
       this.active.points = [e.latlng];
@@ -203,7 +207,7 @@ window.RAA = window.RAA || {};
     state.area = ring;
     areaLayer.clearLayers();
     if (ring) {
-      L.polygon(ring, { color: '#c6ff00', weight: 2, dashArray: '8 6', fillColor: '#c6ff00', fillOpacity: 0.05, interactive: false }).addTo(areaLayer);
+      L.polygon(ring, { color: C.area, weight: 1.5, dashArray: '6 6', fillColor: C.area, fillOpacity: 0.04, interactive: false }).addTo(areaLayer);
     }
     $('btn-fetch').disabled = !ring;
     $('area-info').textContent = ring ? `${ring.length}-point area marked. Fetch the streets when you're ready.` : 'No area yet.';
@@ -239,14 +243,14 @@ window.RAA = window.RAA || {};
   }
 
   function styleFor(e) {
-    if (e.excluded) return { color: '#ff3b5c', weight: 3, opacity: 0.9, dashArray: '6 6' };
-    if (e.cutOff) return { color: '#ff3b5c', weight: 2, opacity: 0.4, dashArray: '2 6' };
-    if (e.deadEnd && !state.includeDeadEnds) return { color: '#6b7280', weight: 3, opacity: 0.75, dashArray: '2 8' };
-    if (e.isolated) return { color: '#64748b', weight: 2, opacity: 0.5, dashArray: '1 6' };
-    if (e.avoid) return { color: '#f59e0b', weight: 4, opacity: 0.95, dashArray: '12 4 2 4' };
-    if (e.custom) return { color: '#e879f9', weight: 4, opacity: 0.95 };
-    if (e.deadEnd) return { color: '#38bdf8', weight: 3, opacity: 0.9, dashArray: '10 5' };
-    return { color: '#38bdf8', weight: 3, opacity: 0.9 };
+    if (e.excluded) return { color: C.blocked, weight: 3, opacity: 0.85, dashArray: '5 6' };
+    if (e.cutOff) return { color: C.blocked, weight: 2, opacity: 0.35, dashArray: '2 6' };
+    if (e.deadEnd && !state.includeDeadEnds) return { color: C.muted, weight: 2.5, opacity: 0.7, dashArray: '2 7' };
+    if (e.isolated) return { color: C.muted, weight: 2, opacity: 0.5, dashArray: '1 6' };
+    if (e.avoid) return { color: C.avoid, weight: 3.5, opacity: 0.9, dashArray: '10 4 2 4' };
+    if (e.custom) return { color: C.mine, weight: 3.5, opacity: 0.9 };
+    if (e.deadEnd) return { color: C.street, weight: 3, opacity: 0.75, dashArray: '8 5' };
+    return { color: C.street, weight: 3, opacity: 0.75 };
   }
 
   function edgeLabel(e) {
@@ -310,13 +314,13 @@ window.RAA = window.RAA || {};
     const deadNote = e.deadEnd && !e.excluded ? '<p class="menu-note">Blocking a dead end drops everything beyond it too.</p>' : '';
     el.innerHTML = `<div class="menu-title">${edgeLabel(e)}</div>
       <div class="menu-row">
-        <button data-st="run" class="${cur === 'run' ? 'on' : ''}" title="Cover it normally">✓ Run it</button>
-        <button data-st="avoid" class="${cur === 'avoid' ? 'on' : ''}" title="Cover it once if needed, but never run it twice">⚠ Avoid</button>
-        <button data-st="block" class="${cur === 'block' ? 'on' : ''}" title="Never run it">⛔ Block</button>
+        <button data-st="run" class="${cur === 'run' ? 'on' : ''}" title="Cover it normally">Run it</button>
+        <button data-st="avoid" class="${cur === 'avoid' ? 'on' : ''}" title="Cover it once if needed, but never run it twice">Avoid</button>
+        <button data-st="block" class="${cur === 'block' ? 'on' : ''}" title="Never run it">Block</button>
       </div>
       <div class="menu-row">
-        <button data-act="cut" title="Make the street impassable at the spot you clicked">✂ Cut here</button>
-        ${e.custom ? '<button data-act="remove" title="Delete this custom path">🗑 Remove path</button>' : ''}
+        <button data-act="cut" title="Make the street impassable at the spot you clicked">Cut here</button>
+        ${e.custom ? '<button data-act="remove" title="Delete this custom path">Remove path</button>' : ''}
       </div>${deadNote}`;
     const popup = L.popup({ className: 'menu-popup', closeButton: true, autoPan: true, maxWidth: 300 }).setLatLng(latlng).setContent(el).openOn(map);
     el.addEventListener('click', ev => {
@@ -350,7 +354,7 @@ window.RAA = window.RAA || {};
       toast('No street close enough to cut there', 'warn');
       return;
     }
-    toast('Passage cut. Click either side to block it, or click the ⛔ to remove the cut.', 'ok');
+    toast('Passage cut. Click either side to block it, or click the red marker to remove the cut.', 'ok');
   }
 
   function removeBarrier(id) {
@@ -364,7 +368,7 @@ window.RAA = window.RAA || {};
     for (const b of state.barriers) {
       if (b.missed) continue;
       const m = L.marker([b.lat, b.lng], {
-        icon: L.divIcon({ className: 'barrier-pin', html: '<span>⛔</span>', iconSize: [22, 22], iconAnchor: [11, 11] }),
+        icon: L.divIcon({ className: 'barrier-pin', html: '<span></span>', iconSize: [18, 18], iconAnchor: [9, 9] }),
         zIndexOffset: 500,
       });
       m.bindTooltip('Impassable here · click to remove', { direction: 'top', offset: [0, -10] });
@@ -381,7 +385,8 @@ window.RAA = window.RAA || {};
     const deadLen = deadEnds.reduce((s, e) => s + e.len, 0);
     $('net-streets').textContent = active.length;
     $('net-km').textContent = fmtKm(total);
-    $('net-dead').textContent = `${deadEnds.length} · ${fmtKm(deadLen)}`;
+    $('net-dead').textContent = fmtKm(deadLen);
+    $('net-dead-k').textContent = `Dead ends (${deadEnds.length})`;
     $('net-excluded').textContent = edges.filter(e => e.excluded).length;
     $('net-avoid').textContent = edges.filter(e => e.avoid && !e.excluded).length;
     $('net-custom').textContent = state.customPaths.length;
@@ -407,10 +412,10 @@ window.RAA = window.RAA || {};
     if (state.start) {
       startMarker = L.marker(state.start, {
         draggable: true,
-        icon: L.divIcon({ className: 'start-pin', html: '<span>🏁</span>', iconSize: [34, 34], iconAnchor: [17, 30] }),
+        icon: L.divIcon({ className: 'start-pin', html: '<span></span>', iconSize: [30, 34], iconAnchor: [15, 33] }),
       }).addTo(map);
       startMarker.on('dragend', () => { state.start = startMarker.getLatLng(); clearRoute(); save(); });
-      startMarker.bindTooltip('Start / finish — drag me', { direction: 'top', offset: [0, -26] });
+      startMarker.bindTooltip('Start / finish — drag me', { direction: 'top', offset: [0, -30] });
     }
     setMode('exclude');
     clearRoute();
@@ -454,15 +459,16 @@ window.RAA = window.RAA || {};
     res.coords = coords;
     routeLayer.clearLayers();
     // streets run twice, shown underneath in orange
-    for (const s of res.sequence) if (s.dup) L.polyline(s.e.coords, { renderer: canvas, color: '#ff8c42', weight: 9, opacity: 0.55, interactive: false }).addTo(routeLayer);
-    L.polyline(coords, { renderer: svg, color: '#c6ff00', weight: 12, opacity: 0.16, interactive: false, className: 'route-glow' }).addTo(routeLayer);
-    L.polyline(coords, { renderer: svg, color: '#c6ff00', weight: 4, opacity: 1, interactive: false, className: 'route-line', dashArray: '10 12' }).addTo(routeLayer);
+    for (const s of res.sequence) if (s.dup) L.polyline(s.e.coords, { renderer: canvas, color: C.route, weight: 14, opacity: 0.32, lineCap: 'round', interactive: false }).addTo(routeLayer);
+    L.polyline(coords, { renderer: svg, color: '#ffffff', weight: 7, opacity: 0.9, lineJoin: 'round', interactive: false }).addTo(routeLayer);
+    L.polyline(coords, { renderer: svg, color: C.route, weight: 3.5, opacity: 1, lineJoin: 'round', interactive: false }).addTo(routeLayer);
     if (!state.start && res.start != null) setStartMarkerOnly(nodePos.get(res.start));
 
     $('rs-streets').textContent = fmtKm(res.streetLength);
     $('rs-route').textContent = fmtKm(res.routeLength);
     const pct = res.streetLength ? (100 * res.extra / res.streetLength) : 0;
-    $('rs-extra').textContent = `${fmtKm(res.extra)} (+${pct.toFixed(0)}%)`;
+    $('rs-extra').textContent = fmtKm(res.extra);
+    $('rs-extra-k').textContent = `Repeated (+${pct.toFixed(0)}%)`;
     $('rs-odd').textContent = res.oddCount;
     updateTime();
     $('route-stats').hidden = false;
@@ -475,10 +481,10 @@ window.RAA = window.RAA || {};
     if (startMarker) map.removeLayer(startMarker);
     startMarker = L.marker(latlng, {
       draggable: true,
-      icon: L.divIcon({ className: 'start-pin', html: '<span>🏁</span>', iconSize: [34, 34], iconAnchor: [17, 30] }),
+      icon: L.divIcon({ className: 'start-pin', html: '<span></span>', iconSize: [30, 34], iconAnchor: [15, 33] }),
     }).addTo(map);
     startMarker.on('dragend', () => { state.start = startMarker.getLatLng(); clearRoute(); save(); });
-    startMarker.bindTooltip('Start / finish — drag me', { direction: 'top', offset: [0, -26] });
+    startMarker.bindTooltip('Start / finish — drag me', { direction: 'top', offset: [0, -30] });
   }
 
   function updateTime() {
