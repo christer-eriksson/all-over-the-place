@@ -122,10 +122,11 @@ window.RAA = window.RAA || {};
     return adj;
   }
 
-  function dijkstra(adj, source, targets) {
-    const dist = new Map([[source, 0]]);
+  function dijkstra(adj, source, targets, weight = cost) {
+    const sources = Array.isArray(source) ? source : [source];
+    const dist = new Map(sources.map(s => [s, 0]));
     const prev = new Map();
-    const heap = new MinHeap(); heap.push(0, source);
+    const heap = new MinHeap(); for (const s of sources) heap.push(0, s);
     const done = new Set();
     let remaining = targets ? targets.size : Infinity;
     while (heap.size) {
@@ -134,7 +135,7 @@ window.RAA = window.RAA || {};
       done.add(u);
       if (targets && targets.has(u) && --remaining === 0) break;
       for (const { e, to } of adj.get(u) || []) {
-        const nd = d + cost(e);
+        const nd = d + weight(e);
         if (nd < (dist.has(to) ? dist.get(to) : Infinity)) { dist.set(to, nd); prev.set(to, { node: u, edge: e }); heap.push(nd, to); }
       }
     }
@@ -229,6 +230,117 @@ window.RAA = window.RAA || {};
     return { sequence, streetLength, routeLength: streetLength + extra, extra, oddCount: odd.length, edgeCount: E.length, start };
   }
 
+  // ---------- Longest loop without repeats ----------
+  const GAIN_RATIO = 4;       // a repeated connector must open up at least this many times its length in new streets
+  const MAX_REPEAT = 600;     // ...and repeat at most this many metres
+  const MIN_PIECE = 150;      // pieces shorter than this are not worth a detour
+
+  /**
+   * Find a long closed loop that runs each street at most once. Every corner on a loop
+   * needs an even number of streets, so the cheapest set of streets to leave out is
+   * found the same way the postman route finds what to repeat (pairing odd corners
+   * along shortest paths), except those streets are dropped instead of run twice.
+   * That can split the network; pieces left behind are joined back with a connector
+   * run out and back, but only when the connector is short and the piece is big.
+   */
+  function solveLoop(edges, includeDeadEnds, startNode, nodePos) {
+    const E = edges.filter(e => isActive(e, includeDeadEnds) && !e.isolated);
+    if (!E.length) throw new Error('No streets left to route.');
+    const adj = buildAdjacency(E);
+    const deg = new Map();
+    for (const e of E) { deg.set(e.a, (deg.get(e.a) || 0) + 1); deg.set(e.b, (deg.get(e.b) || 0) + 1); }
+    const odd = [...deg].filter(([, d]) => d % 2 === 1).map(([n]) => n);
+    const oddSet = new Set(odd);
+
+    // 1. Streets to drop: an odd-corner pairing along the cheapest-to-lose paths (avoided streets are cheap to lose).
+    const lose = e => e.avoid ? e.len * 0.25 : e.len;
+    const sp = new Map();
+    for (const o of odd) sp.set(o, dijkstra(adj, o, oddSet, lose));
+    const D = (u, v) => { const r = sp.get(u).dist.get(v); return r === undefined ? Infinity : r; };
+    const dropped = new Set();
+    for (const [u, v] of matchOdd(odd, D)) {
+      const prev = sp.get(u).prev;
+      for (let cur = v; cur !== u;) {
+        const p = prev.get(cur);
+        if (!p) break;
+        if (dropped.has(p.edge)) dropped.delete(p.edge); else dropped.add(p.edge);   // paths that overlap cancel out
+        cur = p.node;
+      }
+    }
+
+    // 2. What's left has only even corners, but may be in pieces.
+    const kept = E.filter(e => !dropped.has(e));
+    const { find, lenByRoot } = components(kept);
+    const pieceEdges = new Map();
+    for (const e of kept) { const r = find(e.a); if (!pieceEdges.has(r)) pieceEdges.set(r, []); pieceEdges.get(r).push(e); }
+    let seed = null;
+    if (startNode != null && kept.some(e => e.a === startNode || e.b === startNode)) seed = find(startNode);
+    if (seed == null) seed = [...lenByRoot].sort((x, y) => y[1] - x[1])[0][0];
+
+    const onLoop = new Set(pieceEdges.get(seed));
+    const loopNodes = new Set();
+    for (const e of onLoop) { loopNodes.add(e.a); loopNodes.add(e.b); }
+    const instances = [...onLoop].map(e => ({ e, dup: false }));
+    let extra = 0;
+    const waiting = new Map([...pieceEdges].filter(([r]) => r !== seed));
+    const returnLeg = new Map();  // edge -> the 'back again' instance of a connector over a new street
+
+    // 3. Join big pieces back with short out-and-back connectors, best deal first.
+    for (;;) {
+      // running a street already on the loop twice more repeats it twice; a new street once
+      const w = e => (onLoop.has(e) ? 2 : 1) * cost(e);
+      const { dist, prev } = dijkstra(adj, [...loopNodes], null, w);
+      let best = null;
+      for (const [r, list] of waiting) {
+        const gain = lenByRoot.get(r);
+        if (gain < MIN_PIECE) continue;
+        let at = null, d = Infinity;
+        for (const e of list) for (const n of [e.a, e.b]) { const x = dist.get(n); if (x !== undefined && x < d) { d = x; at = n; } }
+        if (at == null || d > MAX_REPEAT || gain < GAIN_RATIO * d) continue;
+        if (!best || gain / d > best.gain / best.d) best = { r, at, d, gain };
+      }
+      if (!best) break;
+      for (let cur = best.at; !loopNodes.has(cur);) {
+        const p = prev.get(cur);
+        if (onLoop.has(p.edge)) { instances.push({ e: p.edge, dup: true }, { e: p.edge, dup: true }); extra += 2 * p.edge.len; }
+        else {
+          const back = { e: p.edge, dup: true };
+          instances.push({ e: p.edge, dup: false }, back);
+          returnLeg.set(p.edge, back);
+          extra += p.edge.len; onLoop.add(p.edge);
+        }
+        loopNodes.add(cur);
+        cur = p.node;
+      }
+      for (const e of waiting.get(best.r)) {
+        if (returnLeg.has(e)) {
+          // an earlier connector ran this street out and back; as part of the piece it is run once, so drop the way back
+          instances.splice(instances.indexOf(returnLeg.get(e)), 1);
+          returnLeg.delete(e); extra -= e.len;
+          continue;
+        }
+        onLoop.add(e); instances.push({ e, dup: false });
+        loopNodes.add(e.a); loopNodes.add(e.b);
+      }
+      waiting.delete(best.r);
+    }
+
+    let start = startNode;
+    if (start == null || !loopNodes.has(start)) {
+      const p = start != null && nodePos.get(start);
+      start = [...loopNodes][0];
+      if (p) { let bd = Infinity; for (const n of loopNodes) { const d = haversine(nodePos.get(n), p); if (d < bd) { bd = d; start = n; } } }
+    }
+    const sequence = euler(instances, start);
+    if (sequence.length !== instances.length) console.warn('Euler circuit incomplete', sequence.length, instances.length);
+    const streetLength = [...onLoop].reduce((s, e) => s + e.len, 0);
+    const total = E.reduce((s, e) => s + e.len, 0);
+    return {
+      sequence, streetLength, routeLength: streetLength + extra, extra, skipped: total - streetLength,
+      skippedEdges: E.filter(e => !onLoop.has(e)), oddCount: odd.length, edgeCount: onLoop.size, start, mode: 'loop',
+    };
+  }
+
   function routeCoords(sequence) {
     const out = [];
     for (const s of sequence) {
@@ -255,5 +367,5 @@ window.RAA = window.RAA || {};
     return best;
   }
 
-  RAA.graph = { haversine, pathLength, markDeadEnds, markComponents, solve, routeCoords, nearestNode, isActive };
+  RAA.graph = { haversine, pathLength, markDeadEnds, markComponents, solve, solveLoop, routeCoords, nearestNode, isActive };
 })(window.RAA);

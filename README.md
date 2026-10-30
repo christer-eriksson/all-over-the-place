@@ -19,6 +19,7 @@ then open http://localhost:8080. Opening `index.html` directly also works in mos
 - Draw the area with the mouse: rectangle or polygon (Enter to finish, Esc to cancel).
 - Streets come from the Overpass API; choose whether service roads, paths/trails, sidewalks and steps count.
 - Downloaded streets are saved in the browser (IndexedDB) in ~1 km tiles for 90 days, so a revisited, redrawn or enlarged area only downloads the tiles it is missing. ↻ forces a fresh copy.
+- Two route types: **Every street** (Chinese Postman, fewest repeats) and **No repeats** (a long loop that never runs a street twice; skips what would force a repeat, but runs a short connector such as a bridge both ways when it opens up a much larger area).
 - Works on phones: a step bar on top, the full-width map, and one step at a time in a bottom sheet. Drawing works by touch, with Undo / Done / Cancel buttons.
 - Click a street for a menu: **Run it**, **Avoid** (covered once if it has to be, never used to double back) or **Block** (never run). Shift-click blocks or unblocks in one go.
 - Blocking a piece also drops anything it cuts off, such as the rest of a dead-end branch. These show as faded red and come back when you unblock.

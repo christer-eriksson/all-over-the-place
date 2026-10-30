@@ -167,6 +167,7 @@ body.panel-collapsed .legend { left: 12px; max-width: calc(100% - 90px); }
 .sw.avoid { background: var(--avoid); }
 .sw.mine { background: var(--mine); }
 .sw.route { background: var(--accent); }
+.sw.skip { background: repeating-linear-gradient(90deg, var(--muted) 0 3px, transparent 3px 7px); }
 .sw.twice { background: rgba(226,88,62,.35); height: 9px; border-radius: 4px; }
 .sw.dash { background-image: repeating-linear-gradient(90deg, transparent 0 4px, #fff 4px 7px); }
 
@@ -225,6 +226,14 @@ body.panel-collapsed .legend { left: 12px; max-width: calc(100% - 90px); }
 .help-card #help-close { position: absolute; top: 14px; right: 14px; }
 .help-card ol { padding-left: 20px; } .help-card li { margin-bottom: 8px; }
 kbd { background: var(--bg); border: 1px solid var(--line-strong); border-radius: 4px; padding: 1px 5px; font-size: 11px; font-family: inherit; }
+
+/* ---------- segmented choice ---------- */
+.seg { display: flex; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 3px; margin: 4px 0 10px; }
+.seg button {
+  flex: 1; border: 0; background: none; border-radius: 7px; padding: 7px 8px; cursor: pointer;
+  font: 500 13px var(--font); color: var(--muted);
+}
+.seg button.on { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(36,39,46,.12); }
 
 /* ---------- drawing bar ---------- */
 .drawbar {

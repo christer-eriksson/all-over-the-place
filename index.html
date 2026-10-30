@@ -105,7 +105,11 @@
 
     <section class="step" id="step-route">
       <div class="step-head"><span class="num">4</span><h2>Plan the route</h2></div>
-      <p class="hint">Finds the shortest loop that runs every street at least once.</p>
+      <div class="seg" id="route-mode" role="group" aria-label="Route type">
+        <button data-mode="all" class="on">Every street</button>
+        <button data-mode="loop">No repeats</button>
+      </div>
+      <p class="hint" id="route-hint">Finds the shortest loop that runs every street at least once.</p>
       <button id="btn-route" class="btn primary go" disabled>Plan route</button>
       <div id="route-stats" hidden>
         <div class="headline">
@@ -115,7 +119,7 @@
         <dl class="facts three">
           <div><dt>Streets</dt><dd id="rs-streets">–</dd></div>
           <div><dt id="rs-extra-k">Repeated</dt><dd id="rs-extra">–</dd></div>
-          <div><dt>Odd corners</dt><dd id="rs-odd">–</dd></div>
+          <div><dt id="rs-odd-k">Odd corners</dt><dd id="rs-odd">–</dd></div>
         </dl>
         <div class="cue-head"><h3>Cue sheet</h3><span id="cue-count" class="small muted"></span></div>
         <ol id="cue"></ol>
@@ -154,6 +158,7 @@
     <div><i class="sw mine"></i>My path</div>
     <div><i class="sw route"></i>Route</div>
     <div><i class="sw twice"></i>Run twice</div>
+    <div><i class="sw skip"></i>Skipped</div>
   </div>
 </div>
 
@@ -168,6 +173,7 @@
       <li><b>Load streets</b> pulls every walkable way inside it from OpenStreetMap.</li>
       <li><b>Adjust the course.</b> Click a street to run, avoid or block it. Avoided streets are covered once if needed but never repeated. Blocking a piece also drops anything it cuts off, such as the rest of a dead end. A cut makes a street impassable at one spot. You can also draw your own paths, whose ends snap to streets within 30 m, and pick a start.</li>
       <li><b>Plan the route.</b> This solves the route inspection problem, also called the Chinese Postman Problem. It pairs up corners with an odd number of streets along the cheapest connections, runs those streets twice, and traces one continuous loop.</li>
+      <li><b>No repeats</b> is the other route type. It drops the fewest streets needed so the loop never runs a street twice, which mostly means dead ends. A piece left on its own is joined back by running a short stretch both ways, such as a bridge, but only when that stretch is at most 600 m and the piece is at least four times longer. Skipped streets show grey.</li>
       <li><b>Export</b> a GPX or TCX file and import it as a course in Garmin Connect.</li>
     </ol>
     <p class="small muted">While drawing, press <kbd>Enter</kbd> to finish, <kbd>Backspace</kbd> to undo a point and <kbd>Esc</kbd> to cancel. Everything you set is remembered in this browser, and downloaded streets are kept for 90 days so the same area loads instantly next time. Press ↻ next to Load streets for a fresh copy. Your own paths and cuts are kept when you clear or move the area, and are used wherever they fall inside it.</p>

@@ -25,6 +25,7 @@ window.RAA = window.RAA || {};
     filters: { service: true, trails: true, sidewalks: false, steps: false },
     start: null,           // {lat,lng}
     pace: '5:30',
+    routeMode: 'all',      // 'all': every street, fewest repeats | 'loop': longest loop, no repeats
     route: null,
     mode: 'exclude',       // 'exclude' | 'start'
   };
@@ -253,7 +254,7 @@ window.RAA = window.RAA || {};
       localStorage.setItem(STORE_KEY, JSON.stringify({
         area: state.area, customPaths: state.customPaths, excludedKeys: [...state.excludedKeys],
         avoidKeys: [...state.avoidKeys], barriers: state.barriers,
-        includeDeadEnds: state.includeDeadEnds, useMyPaths: state.useMyPaths, useMyCuts: state.useMyCuts, filters: state.filters, start: state.start, pace: state.pace,
+        includeDeadEnds: state.includeDeadEnds, useMyPaths: state.useMyPaths, useMyCuts: state.useMyCuts, filters: state.filters, start: state.start, pace: state.pace, routeMode: state.routeMode,
         view: { lat: c.lat, lng: c.lng, zoom: map.getZoom() },
       }));
     } catch (e) { /* ignore */ }
@@ -274,6 +275,7 @@ window.RAA = window.RAA || {};
       Object.assign(state.filters, s.filters || {});
       state.start = s.start || null;
       state.pace = s.pace || '5:30';
+      state.routeMode = s.routeMode === 'loop' ? 'loop' : 'all';
       if (s.view) map.setView([s.view.lat, s.view.lng], s.view.zoom);
       return true;
     } catch (e) { return false; }
@@ -563,7 +565,9 @@ window.RAA = window.RAA || {};
     let res;
     try {
       const t0 = performance.now();
-      res = RAA.graph.solve(edges, state.includeDeadEnds, startNode);
+      res = state.routeMode === 'loop'
+        ? RAA.graph.solveLoop(edges, state.includeDeadEnds, startNode, nodePos)
+        : RAA.graph.solve(edges, state.includeDeadEnds, startNode);
       res.ms = performance.now() - t0;
     } catch (err) {
       toast(err.message, 'warn');
@@ -573,6 +577,11 @@ window.RAA = window.RAA || {};
     const coords = RAA.graph.routeCoords(res.sequence);
     res.coords = coords;
     routeLayer.clearLayers();
+    // streets the no-repeat loop leaves out, greyed over the street layer
+    for (const e of res.skippedEdges || []) {
+      L.polyline(e.coords, { renderer: canvas, color: '#ffffff', weight: 6, opacity: 0.85, interactive: false }).addTo(routeLayer);
+      L.polyline(e.coords, { renderer: canvas, color: C.muted, weight: 3, opacity: 1, dashArray: '2 5', interactive: false }).addTo(routeLayer);
+    }
     // streets run twice, shown underneath in orange
     for (const s of res.sequence) if (s.dup) L.polyline(s.e.coords, { renderer: canvas, color: C.route, weight: 14, opacity: 0.32, lineCap: 'round', interactive: false }).addTo(routeLayer);
     L.polyline(coords, { renderer: svg, color: '#ffffff', weight: 7, opacity: 0.9, lineJoin: 'round', interactive: false }).addTo(routeLayer);
@@ -585,7 +594,14 @@ window.RAA = window.RAA || {};
     const pct = res.streetLength ? (100 * res.extra / res.streetLength) : 0;
     $('rs-extra').textContent = fmtKm(res.extra);
     $('rs-extra-k').textContent = `Repeated (+${pct.toFixed(0)}%)`;
-    $('rs-odd').textContent = res.oddCount;
+    if (res.mode === 'loop') {
+      const total = res.streetLength + res.skipped;
+      $('rs-odd-k').textContent = `Skipped (${total ? (100 * res.skipped / total).toFixed(0) : 0}%)`;
+      $('rs-odd').textContent = fmtKm(res.skipped);
+    } else {
+      $('rs-odd-k').textContent = 'Odd corners';
+      $('rs-odd').textContent = res.oddCount;
+    }
     updateTime();
     $('route-stats').hidden = false;
     $('btn-gpx').disabled = false; $('btn-tcx').disabled = false;
@@ -723,6 +739,19 @@ window.RAA = window.RAA || {};
     $('btn-clear-start').onclick = () => { setStart(null); };
 
     $('btn-route').onclick = computeRoute;
+    const modeHint = {
+      all: 'Finds the shortest loop that runs every street at least once.',
+      loop: 'Finds a long loop that never runs a street twice. Streets that would force a repeat, like dead ends, are skipped. A short stretch may be run both ways if it opens up a much bigger area, like a bridge.',
+    };
+    const setRouteMode = m => {
+      state.routeMode = m;
+      document.querySelectorAll('#route-mode button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+      $('route-hint').textContent = modeHint[m];
+    };
+    document.querySelectorAll('#route-mode button').forEach(b => {
+      b.onclick = () => { if (state.routeMode === b.dataset.mode) return; setRouteMode(b.dataset.mode); save(); if (state.route) computeRoute(); };
+    });
+    setRouteMode(state.routeMode);
     const pace = $('pace');
     pace.value = state.pace;
     pace.onchange = () => { state.pace = pace.value; updateTime(); save(); };
