@@ -25,29 +25,59 @@ window.RAA = window.RAA || {};
     unclassified: 'Minor road', tertiary: 'Road', secondary: 'Road', primary: 'Main road', pedestrian: 'Pedestrian street',
   };
 
-  function polyString(ring) {
-    return ring.map(p => `${p.lat.toFixed(6)} ${p.lng.toFixed(6)}`).join(' ');
-  }
+    // Every highway type any filter combination can use, so filters can change without a refetch.
+  const WANTED = [...ROADS, ...TRAILS, ...SERVICE, ...STEPS].join('|');
+  const PAD_M = 150;          // fetch a little beyond the area so small redraws reuse the download
+  const TRY_MS = 30000;       // give up on one server after this and try the next
+  const cache = [];           // [{ box, elements }] downloads from this visit, newest first
 
-  /** Fetch every highway way (plus its nodes) whose geometry touches the polygon. */
+  function boxOf(ring, padM) {
+    const lats = ring.map(p => p.lat), lngs = ring.map(p => p.lng);
+    const dLat = padM / 111320, dLng = dLat / Math.max(0.2, Math.cos(lats[0] * Math.PI / 180));
+    return { s: Math.min(...lats) - dLat, w: Math.min(...lngs) - dLng, n: Math.max(...lats) + dLat, e: Math.max(...lngs) + dLng };
+  }
+  const contains = (o, i) => i.s >= o.s && i.w >= o.w && i.n <= o.n && i.e <= o.e;
+
+  /**
+   * Fetch the highway ways (plus their nodes) around the polygon. Downloads a padded
+   * bounding box (much cheaper for Overpass than a polygon filter; buildGraph clips
+   * to the polygon anyway) and reuses an earlier download when it already covers the area.
+   */
   async function fetchStreets(ring, onStatus) {
-    const query = `[out:json][timeout:90];way["highway"](poly:"${polyString(ring)}");out body;>;out skel qt;`;
+    const need = boxOf(ring, 0);
+    const hit = cache.find(c => contains(c.box, need));
+    if (hit) { onStatus && onStatus('Using streets already downloaded…'); return hit.elements; }
+
+    const box = boxOf(ring, PAD_M);
+    const bbox = [box.s, box.w, box.n, box.e].map(v => v.toFixed(6)).join(',');
+    const query = `[out:json][timeout:25];way["highway"~"^(${WANTED})$"](${bbox});out body qt;>;out skel qt;`;
     let lastErr = null;
     for (const url of ENDPOINTS) {
+      const host = new URL(url).host;
+      const ctrl = new AbortController();
+      const t0 = Date.now();
+      const tick = setInterval(() => onStatus && onStatus(`Asking ${host} for streets… ${Math.round((Date.now() - t0) / 1000)} s`), 1000);
+      const timer = setTimeout(() => ctrl.abort(), TRY_MS);
       try {
-        onStatus && onStatus(`Asking ${new URL(url).host} for streets…`);
+        onStatus && onStatus(`Asking ${host} for streets…`);
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: 'data=' + encodeURIComponent(query),
+          signal: ctrl.signal,
         });
-        if (!res.ok) throw new Error(`${new URL(url).host} answered HTTP ${res.status}`);
+        if (!res.ok) throw new Error(res.status === 429 ? `${host} is busy (too many requests)` : `${host} answered HTTP ${res.status}`);
         const json = await res.json();
         if (!json.elements) throw new Error('Unexpected Overpass answer');
+        if (json.remark && /timed out|runtime error/i.test(json.remark)) throw new Error(`${host}: ${json.remark}`);
+        cache.unshift({ box, elements: json.elements });
+        cache.length = Math.min(cache.length, 5);
         return json.elements;
       } catch (err) {
-        lastErr = err;
+        lastErr = err.name === 'AbortError' ? new Error(`${host} did not answer within ${TRY_MS / 1000} s`) : err;
         console.warn('Overpass endpoint failed', url, err);
+      } finally {
+        clearTimeout(timer); clearInterval(tick);
       }
     }
     throw lastErr || new Error('All Overpass endpoints failed');
