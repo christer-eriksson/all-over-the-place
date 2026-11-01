@@ -62,14 +62,21 @@ window.RAA = window.RAA || {};
   const map = L.map('map', { zoomControl: false, preferCanvas: true }).setView([59.3293, 18.0686], 13);
   L.control.zoom({ position: 'bottomright' }).addTo(map);
   const osmAttr = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-  // "Night run": plain OSM tiles darkened with a CSS filter (no API key needed)
-  const light = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: osmAttr, maxZoom: 19, className: 'soft-tiles' });
-  const dark = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: osmAttr, maxZoom: 19, className: 'night-tiles' });
-  const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    attribution: 'Tiles &copy; Esri', maxZoom: 19,
-  });
-  light.addTo(map);
-  L.control.layers({ 'Light': light, 'Dark': dark, 'Satellite': sat }, null, { position: 'bottomright' }).addTo(map);
+  const cfg = RAA.config || {};
+  let layers;
+  if (cfg.tiles === 'stadia') {
+    const stadiaAttr = '&copy; <a href="https://stadiamaps.com/">Stadia Maps</a> &copy; <a href="https://openmaptiles.org/">OpenMapTiles</a> ' + osmAttr;
+    const stadia = style => L.tileLayer(`https://tiles.stadiamaps.com/tiles/${style}/{z}/{x}/{y}{r}.png${cfg.stadiaKey ? '?api_key=' + encodeURIComponent(cfg.stadiaKey) : ''}`, { attribution: stadiaAttr, maxZoom: 20 });
+    layers = { 'Light': stadia('alidade_smooth'), 'Dark': stadia('alidade_smooth_dark'), 'Outdoors': stadia('outdoors') };
+  } else {
+    // "Dark": plain OSM tiles darkened with a CSS filter
+    layers = {
+      'Light': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: osmAttr, maxZoom: 19, className: 'soft-tiles' }),
+      'Dark': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: osmAttr, maxZoom: 19, className: 'night-tiles' }),
+    };
+  }
+  layers.Light.addTo(map);
+  L.control.layers(layers, null, { position: 'bottomright' }).addTo(map);
 
   const canvas = L.canvas({ padding: 0.5 });
   const svg = L.svg({ padding: 0.5 });
