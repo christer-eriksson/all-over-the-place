@@ -341,6 +341,84 @@ window.RAA = window.RAA || {};
     };
   }
 
+  // ---------- Several runs from the same start ----------
+  /**
+   * Cut a finished route into runs that each leave from the start and come back to it.
+   * The tour is cut into stretches, and each stretch gets the shortest way out to where
+   * it begins and home from where it ends (tour splitting, as in Frederickson, Hecht and
+   * Kim's k-postman heuristic). Cut points are picked so the longest run is as short as
+   * it can be for the number of runs.
+   * opts: {count} for a set number of runs, or {target} metres for runs of about that length.
+   */
+  function splitRoute(edges, includeDeadEnds, res, opts) {
+    const seq = res.sequence, n = seq.length, start = res.start;
+    const E = edges.filter(e => isActive(e, includeDeadEnds) && !e.isolated);
+    const { prev } = dijkstra(buildAdjacency(E), start, null);
+    const homeLen = new Map([[start, 0]]);
+    const lenHome = node => {
+      const chain = [];
+      for (let cur = node; !homeLen.has(cur); cur = prev.get(cur).node) chain.push(cur);
+      for (let i = chain.length - 1; i >= 0; i--) { const p = prev.get(chain[i]); homeLen.set(chain[i], p.edge.len + homeLen.get(p.node)); }
+      return homeLen.get(node);
+    };
+    const at = i => i === n ? start : (seq[i].forward ? seq[i].e.a : seq[i].e.b);   // the corner before step i
+    const P = [0], H = [];
+    for (let i = 0; i < n; i++) P.push(P[i] + seq[i].e.len);
+    for (let i = 0; i <= n; i++) H.push(lenHome(at(i)));
+    const runLen = (i, j) => H[i] + P[j] - P[i] + H[j];
+
+    // fewest cuts so that no run is longer than cap; null if some single street is out of reach
+    const cut = cap => {
+      const cuts = [0];
+      for (let i = 0; i < n;) {
+        let best = -1;
+        for (let j = i + 1; j <= n && H[i] + P[j] - P[i] <= cap; j++) if (runLen(i, j) <= cap) best = j;
+        if (best < 0) return null;
+        cuts.push(best); i = best;
+      }
+      return cuts;
+    };
+    let lo = 0;
+    for (let i = 0; i < n; i++) lo = Math.max(lo, runLen(i, i + 1));
+    // smallest cap that still gives at most k runs
+    const balance = (k, hi) => {
+      let a = lo, b = hi, cuts = cut(hi);
+      while (b - a > 5) {
+        const mid = (a + b) / 2, c = cut(mid);
+        if (c && c.length - 1 <= k) { b = mid; cuts = c; } else a = mid;
+      }
+      return cuts;
+    };
+    let cuts;
+    if (opts.target) {
+      const first = cut(Math.max(opts.target, lo));
+      cuts = balance(first.length - 1, Math.max(opts.target, lo));
+    } else {
+      cuts = balance(Math.max(1, Math.round(opts.count)), Math.max(P[n], lo));
+    }
+
+    const pathHome = node => {
+      const out = [];
+      for (let cur = node; cur !== start;) { const p = prev.get(cur); out.push({ e: p.edge, dup: true, link: true, forward: cur === p.edge.a }); cur = p.node; }
+      return out;
+    };
+    const parts = [];
+    for (let k = 1; k < cuts.length; k++) {
+      let a = cuts[k - 1], b = cuts[k];
+      // a stretch that starts or ends on a repeat can leave it out: that street is run in full elsewhere
+      while (a < b && seq[a].dup && H[a + 1] <= H[a] + seq[a].e.len) a++;
+      while (b > a && seq[b - 1].dup && H[b - 1] <= H[b] + seq[b - 1].e.len) b--;
+      const body = seq.slice(a, b);
+      const streetLength = body.reduce((s, x) => s + (x.dup ? 0 : x.e.len), 0);
+      if (!streetLength) continue;
+      const out = pathHome(at(a)).reverse().map(s => ({ ...s, forward: !s.forward }));
+      const sequence = [...out, ...body, ...pathHome(at(b))];
+      const routeLength = sequence.reduce((s, x) => s + x.e.len, 0);
+      parts.push({ sequence, streetLength, routeLength, extra: routeLength - streetLength, start });
+    }
+    return { parts, shortest: lo };
+  }
+
   function routeCoords(sequence) {
     const out = [];
     for (const s of sequence) {
@@ -367,5 +445,5 @@ window.RAA = window.RAA || {};
     return best;
   }
 
-  RAA.graph = { haversine, pathLength, markDeadEnds, markComponents, solve, solveLoop, routeCoords, nearestNode, isActive };
+  RAA.graph = { haversine, pathLength, markDeadEnds, markComponents, solve, solveLoop, splitRoute, routeCoords, nearestNode, isActive };
 })(window.RAA);

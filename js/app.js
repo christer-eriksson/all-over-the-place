@@ -26,7 +26,10 @@ window.RAA = window.RAA || {};
     start: null,           // {lat,lng}
     pace: '5:30',
     routeMode: 'all',      // 'all': every street, fewest repeats | 'loop': longest loop, no repeats
+    split: { mode: 'none', count: 3, target: 10 },   // 'none' | 'count': that many runs | 'target': runs of about that many km
     route: null,
+    parts: null,           // the route split into runs from the start, or null
+    part: -1,              // the run on show, -1 for all of them
     mode: 'exclude',       // 'exclude' | 'start'
   };
 
@@ -254,7 +257,7 @@ window.RAA = window.RAA || {};
       localStorage.setItem(STORE_KEY, JSON.stringify({
         area: state.area, customPaths: state.customPaths, excludedKeys: [...state.excludedKeys],
         avoidKeys: [...state.avoidKeys], barriers: state.barriers,
-        includeDeadEnds: state.includeDeadEnds, useMyPaths: state.useMyPaths, useMyCuts: state.useMyCuts, filters: state.filters, start: state.start, pace: state.pace, routeMode: state.routeMode,
+        includeDeadEnds: state.includeDeadEnds, useMyPaths: state.useMyPaths, useMyCuts: state.useMyCuts, filters: state.filters, start: state.start, pace: state.pace, routeMode: state.routeMode, split: state.split,
         view: { lat: c.lat, lng: c.lng, zoom: map.getZoom() },
       }));
     } catch (e) { /* ignore */ }
@@ -276,6 +279,7 @@ window.RAA = window.RAA || {};
       state.start = s.start || null;
       state.pace = s.pace || '5:30';
       state.routeMode = s.routeMode === 'loop' ? 'loop' : 'all';
+      if (s.split) Object.assign(state.split, s.split);
       if (s.view) map.setView([s.view.lat, s.view.lng], s.view.zoom);
       return true;
     } catch (e) { return false; }
@@ -547,8 +551,11 @@ window.RAA = window.RAA || {};
   }
 
   // ---------- Route ----------
+  const PART_COLORS = ['#e2583e', '#2a9d6f', '#8e5ac8', '#d6457f', '#24272e', '#c98a00', '#1a9fb0', '#8a5a2b'];   // no blue: the streets are blue
+  const partColor = i => PART_COLORS[i % PART_COLORS.length];
+
   function clearRoute() {
-    state.route = null;
+    state.route = null; state.parts = null; state.part = -1;
     updateStepper();
     routeLayer.clearLayers();
     // the auto-placed start marker from the last route is stale now
@@ -556,6 +563,7 @@ window.RAA = window.RAA || {};
     $('route-stats').hidden = true;
     $('cue').innerHTML = '';
     $('btn-gpx').disabled = true; $('btn-tcx').disabled = true;
+    $('btn-gpx').textContent = 'Download GPX';
   }
 
   function computeRoute() {
@@ -574,25 +582,70 @@ window.RAA = window.RAA || {};
       return;
     }
     state.route = res;
-    const coords = RAA.graph.routeCoords(res.sequence);
-    res.coords = coords;
+    res.coords = RAA.graph.routeCoords(res.sequence);
+    if (!state.start && res.start != null) setStartMarkerOnly(nodePos.get(res.start));
+    applySplit();
+    updateStepper();
+    showRoute();
+    $('route-stats').hidden = false;
+    $('btn-gpx').disabled = false; $('btn-tcx').disabled = false;
+    toast(state.parts ? `${state.parts.length} runs ready, ${fmtKm(totalOf(state.parts))} in all` : `Route ready: ${fmtKm(res.routeLength)} in ${res.ms.toFixed(0)} ms`, 'ok');
+  }
+
+  const totalOf = parts => parts.reduce((s, p) => s + p.routeLength, 0);
+
+  /** Cut the planned route into runs from the start, as the split setting asks. */
+  function applySplit() {
+    const res = state.route, sp = state.split, note = $('split-note');
+    state.parts = null; state.part = -1; note.hidden = true;
+    if (!res || sp.mode === 'none') return;
+    const target = sp.mode === 'target' ? sp.target * 1000 : 0;
+    const { parts, shortest } = RAA.graph.splitRoute(state.graph.edges, state.includeDeadEnds, res, target ? { target } : { count: sp.count });
+    const say = t => { note.textContent = t; note.hidden = false; };
+    if (parts.length < 2) { say(target ? `The whole route is under ${sp.target} km, so it stays one run.` : 'The route is too short to split.'); return; }
+    for (const p of parts) p.coords = RAA.graph.routeCoords(p.sequence);
+    state.parts = parts;
+    const over = totalOf(parts) - res.routeLength;
+    if (target && shortest > target + 1) say(`The farthest streets need a run of at least ${fmtKm(shortest)} there and back, so some runs are longer than ${sp.target} km.`);
+    else say(`Getting out to each part and home again adds ${fmtKm(over)} over a single run.`);
+  }
+
+  /** The run on show: one of the parts, or the whole route. */
+  function shown() {
+    if (state.parts && state.part >= 0) return state.parts[state.part];
+    if (state.parts) { const len = totalOf(state.parts); return { routeLength: len, streetLength: state.route.streetLength, extra: len - state.route.streetLength }; }
+    return state.route;
+  }
+
+  function showRoute() {
+    const res = state.route, parts = state.parts;
     routeLayer.clearLayers();
     // streets the no-repeat loop leaves out, greyed over the street layer
     for (const e of res.skippedEdges || []) {
       L.polyline(e.coords, { renderer: canvas, color: '#ffffff', weight: 6, opacity: 0.85, interactive: false }).addTo(routeLayer);
       L.polyline(e.coords, { renderer: canvas, color: C.muted, weight: 3, opacity: 1, dashArray: '2 5', interactive: false }).addTo(routeLayer);
     }
-    // streets run twice, shown underneath in orange
-    for (const s of res.sequence) if (s.dup) L.polyline(s.e.coords, { renderer: canvas, color: C.route, weight: 14, opacity: 0.32, lineCap: 'round', interactive: false }).addTo(routeLayer);
-    L.polyline(coords, { renderer: svg, color: '#ffffff', weight: 7, opacity: 0.9, lineJoin: 'round', interactive: false }).addTo(routeLayer);
-    L.polyline(coords, { renderer: svg, color: C.route, weight: 3.5, opacity: 1, lineJoin: 'round', interactive: false }).addTo(routeLayer);
-    if (!state.start && res.start != null) setStartMarkerOnly(nodePos.get(res.start));
-    updateStepper();
+    const draw = (run, color) => {
+      // streets run twice, shown underneath
+      for (const s of run.sequence) if (s.dup) L.polyline(s.e.coords, { renderer: canvas, color, weight: 14, opacity: 0.32, lineCap: 'round', interactive: false }).addTo(routeLayer);
+      L.polyline(run.coords, { renderer: svg, color: '#ffffff', weight: 7, opacity: 0.9, lineJoin: 'round', interactive: false }).addTo(routeLayer);
+      L.polyline(run.coords, { renderer: svg, color, weight: 3.5, opacity: 1, lineJoin: 'round', interactive: false }).addTo(routeLayer);
+    };
+    if (!parts) draw(res, C.route);
+    else if (state.part < 0) parts.forEach((p, i) => {
+      L.polyline(p.coords, { renderer: svg, color: '#ffffff', weight: 6, opacity: 0.8, lineJoin: 'round', interactive: false }).addTo(routeLayer);
+      L.polyline(p.coords, { renderer: svg, color: partColor(i), weight: 3, opacity: 0.95, lineJoin: 'round', interactive: false }).addTo(routeLayer);
+    });
+    else {
+      parts.forEach((p, i) => { if (i !== state.part) L.polyline(p.coords, { renderer: svg, color: partColor(i), weight: 2.5, opacity: 0.25, lineJoin: 'round', interactive: false }).addTo(routeLayer); });
+      draw(parts[state.part], partColor(state.part));
+    }
 
-    $('rs-streets').textContent = fmtKm(res.streetLength);
-    $('rs-route').textContent = fmtKm(res.routeLength);
-    const pct = res.streetLength ? (100 * res.extra / res.streetLength) : 0;
-    $('rs-extra').textContent = fmtKm(res.extra);
+    const v = shown();
+    $('rs-streets').textContent = fmtKm(v.streetLength);
+    $('rs-route').textContent = fmtKm(v.routeLength);
+    const pct = v.streetLength ? (100 * v.extra / v.streetLength) : 0;
+    $('rs-extra').textContent = fmtKm(v.extra);
     $('rs-extra-k').textContent = `Repeated (+${pct.toFixed(0)}%)`;
     if (res.mode === 'loop') {
       const total = res.streetLength + res.skipped;
@@ -603,10 +656,32 @@ window.RAA = window.RAA || {};
       $('rs-odd').textContent = res.oddCount;
     }
     updateTime();
-    $('route-stats').hidden = false;
-    $('btn-gpx').disabled = false; $('btn-tcx').disabled = false;
-    buildCueSheet(res);
-    toast(`Route ready: ${fmtKm(res.routeLength)} in ${res.ms.toFixed(0)} ms`, 'ok');
+    const all = parts && state.part < 0;
+    $('cue-title').parentElement.hidden = all; $('cue').hidden = all;
+    if (!all) buildCueSheet(parts ? parts[state.part] : res);
+    $('cue-title').textContent = parts ? `Cue sheet, run ${state.part + 1}` : 'Cue sheet';
+    const n = parts ? (state.part < 0 ? `all ${parts.length} runs` : `run ${state.part + 1}`) : '';
+    $('btn-gpx').textContent = n ? `Download GPX, ${n}` : 'Download GPX';
+  }
+
+  function buildParts() {
+    const ol = $('parts'), parts = state.parts;
+    ol.hidden = !parts;
+    ol.innerHTML = '';
+    if (!parts) return;
+    const sec = parsePace(state.pace);
+    const time = len => sec ? ' · ' + fmtDuration(sec * len / 1000) : '';
+    const row = (i, label, meta, color) => {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.type = 'button';
+      if (i === state.part) b.classList.add('on');
+      b.innerHTML = `<i class="dot" style="background:${color}"></i><span>${label}</span><span class="meta">${meta}</span>`;
+      b.onclick = () => { state.part = i; showRoute(); };
+      li.appendChild(b); ol.appendChild(li);
+    };
+    row(-1, 'All runs', `${fmtKm(totalOf(parts))}${time(totalOf(parts))}`, 'conic-gradient(' + parts.slice(0, 8).map((p, i, a) => `${partColor(i)} ${100 * i / a.length}% ${100 * (i + 1) / a.length}%`).join(',') + ')');
+    parts.forEach((p, i) => row(i, `Run ${i + 1}`, `${fmtKm(p.routeLength)}${time(p.routeLength)}`, partColor(i)));
   }
 
   function setStartMarkerOnly(latlng) {
@@ -622,15 +697,16 @@ window.RAA = window.RAA || {};
   function updateTime() {
     const sec = parsePace(state.pace);
     if (!state.route) return;
-    $('rs-time').textContent = sec ? fmtDuration(sec * state.route.routeLength / 1000) : '–';
+    $('rs-time').textContent = sec ? fmtDuration(sec * shown().routeLength / 1000) : '–';
+    buildParts();
   }
 
   function buildCueSheet(res) {
     const groups = [];
     for (const s of res.sequence) {
       const last = groups[groups.length - 1];
-      if (last && last.name === s.e.name) { last.len += s.e.len; last.dup = last.dup && s.dup; }
-      else groups.push({ name: s.e.name, len: s.e.len, dup: s.dup, custom: s.e.custom });
+      if (last && last.name === s.e.name && !!last.link === !!s.link) { last.len += s.e.len; last.dup = last.dup && s.dup; }
+      else groups.push({ name: s.e.name, len: s.e.len, dup: s.dup, link: s.link, custom: s.e.custom });
     }
     const ol = $('cue');
     ol.innerHTML = '';
@@ -638,7 +714,8 @@ window.RAA = window.RAA || {};
     for (const g of groups) {
       const li = document.createElement('li');
       li.innerHTML = `<span class="cue-at">${fmtKm(acc)}</span><span class="cue-name">${escapeHtml(g.name)}</span><span class="cue-len">${fmtM(g.len)}</span>`;
-      if (g.dup) li.classList.add('dup');
+      if (g.link) li.classList.add('link');
+      else if (g.dup) li.classList.add('dup');
       if (g.custom) li.classList.add('custom');
       ol.appendChild(li);
       acc += g.len;
@@ -752,6 +829,29 @@ window.RAA = window.RAA || {};
       b.onclick = () => { if (state.routeMode === b.dataset.mode) return; setRouteMode(b.dataset.mode); save(); if (state.route) computeRoute(); };
     });
     setRouteMode(state.routeMode);
+
+    const resplit = () => { if (!state.route) return; applySplit(); showRoute(); };
+    const splitUnit = { count: 'runs', target: 'km each' };
+    const setSplit = m => {
+      state.split.mode = m;
+      document.querySelectorAll('#split-mode button').forEach(b => b.classList.toggle('on', b.dataset.split === m));
+      $('split-row').hidden = m === 'none';
+      if (m === 'none') return;
+      const inp = $('split-val');
+      inp.step = m === 'count' ? '1' : '0.5'; inp.min = m === 'count' ? '2' : '1';
+      inp.value = state.split[m];
+      $('split-unit').textContent = splitUnit[m];
+    };
+    document.querySelectorAll('#split-mode button').forEach(b => {
+      b.onclick = () => { if (state.split.mode === b.dataset.split) return; setSplit(b.dataset.split); save(); resplit(); };
+    });
+    $('split-val').oninput = () => {
+      const m = state.split.mode, v = parseFloat($('split-val').value);
+      if (!(v >= (m === 'count' ? 2 : 1)) || v > 500) return;   // wait until it's a sensible number
+      state.split[m] = m === 'count' ? Math.round(v) : v;
+      save(); resplit();
+    };
+    setSplit(state.split.mode);
     const pace = $('pace');
     pace.value = state.pace;
     pace.onchange = () => { state.pace = pace.value; updateTime(); save(); };
@@ -759,22 +859,33 @@ window.RAA = window.RAA || {};
     async function exportCourse(format) {
       if (!state.route) return;
       const name = ($('gpx-name').value || 'Run All Around').trim();
-      const desc = `Every street once: ${fmtKm(state.route.streetLength)} of streets, ${fmtKm(state.route.routeLength)} total. Generated by Run All Around.`;
+      const parts = state.parts;
+      // one file per run when all runs are on show
+      const runs = !parts ? [{ run: state.route, name }]
+        : (state.part < 0 ? parts.map((p, i) => i) : [state.part]).map(i => ({ run: parts[i], name: `${name} ${i + 1} of ${parts.length}` }));
       const btn = $(format === 'tcx' ? 'btn-tcx' : 'btn-gpx');
       btn.disabled = true; btn.classList.add('loading');
       const status = $('export-status');
       try {
-        let elevations = null;
-        if ($('x-ele').checked) {
-          elevations = await RAA.gpx.fetchElevations(state.route.coords, m => { status.textContent = m; });
-          if (!elevations) toast('Elevation service unavailable — exporting without elevation', 'warn');
+        let points = 0, withEle = false;
+        for (const [k, { run, name: runName }] of runs.entries()) {
+          const desc = parts ? `${runName}: ${fmtKm(run.streetLength)} of new streets, ${fmtKm(run.routeLength)} total. Generated by Run All Around.`
+            : `Every street once: ${fmtKm(run.streetLength)} of streets, ${fmtKm(run.routeLength)} total. Generated by Run All Around.`;
+          let elevations = null;
+          if ($('x-ele').checked) {
+            elevations = await RAA.gpx.fetchElevations(run.coords, m => { status.textContent = runs.length > 1 ? `Run ${k + 1} of ${runs.length}: ${m}` : m; });
+            if (!elevations) toast('Elevation service unavailable — exporting without elevation', 'warn');
+          }
+          const opts = { paceSec: parsePace(state.pace) || 330, elevations };
+          const file = runName.replace(/[^\w\-]+/g, '_');
+          if (format === 'tcx') RAA.gpx.download(RAA.gpx.buildTcx(run.coords, runName, opts), file + '.tcx', 'application/vnd.garmin.tcx+xml');
+          else RAA.gpx.download(RAA.gpx.build(run.coords, runName, desc, opts), file + '.gpx');
+          points += run.coords.length; withEle = withEle || !!elevations;
+          if (k < runs.length - 1) await new Promise(r => setTimeout(r, 400));   // browsers drop downloads fired all at once
         }
-        const opts = { paceSec: parsePace(state.pace) || 330, elevations };
-        const file = name.replace(/[^\w\-]+/g, '_');
-        if (format === 'tcx') RAA.gpx.download(RAA.gpx.buildTcx(state.route.coords, name, opts), file + '.tcx', 'application/vnd.garmin.tcx+xml');
-        else RAA.gpx.download(RAA.gpx.build(state.route.coords, name, desc, opts), file + '.gpx');
-        status.textContent = `${format.toUpperCase()} ready: ${state.route.coords.length} points${elevations ? ' with elevation' : ''} and timestamps.`;
-        toast(`${format.toUpperCase()} downloaded — import it as a course in Garmin Connect`, 'ok');
+        const what = runs.length > 1 ? `${runs.length} ${format.toUpperCase()} files` : format.toUpperCase();
+        status.textContent = `${what} ready: ${points} points${withEle ? ' with elevation' : ''} and timestamps.`;
+        toast(`${what} downloaded — import ${runs.length > 1 ? 'them' : 'it'} as ${runs.length > 1 ? 'courses' : 'a course'} in Garmin Connect`, 'ok');
       } finally {
         btn.disabled = false; btn.classList.remove('loading');
       }

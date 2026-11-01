@@ -310,3 +310,22 @@ kbd { background: var(--bg); border: 1px solid var(--line-strong); border-radius
   .menu-popup .leaflet-popup-content { margin: 12px; }
   .edge-menu button { padding: 9px 10px; }
 }
+
+/* ---------- split into runs ---------- */
+.split-val { display: flex; align-items: center; gap: 8px; margin: -2px 0 10px; font-size: 13px; color: var(--muted); }
+.split-val .text { width: 90px; margin: 0; }
+.split-val[hidden], .cue-head[hidden] { display: none; }
+#split-note { color: var(--muted); background: var(--bg); border: 1px solid var(--line); }
+#parts { list-style: none; margin: 12px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden auto; max-height: 240px; }
+#parts li { border-bottom: 1px solid var(--line); }
+#parts li:last-child { border-bottom: 0; }
+#parts button {
+  width: 100%; display: grid; grid-template-columns: 12px 1fr auto; gap: 10px; align-items: center; padding: 9px 10px;
+  background: var(--card); border: 0; font: 500 13px var(--font); color: var(--text); text-align: left; cursor: pointer;
+}
+#parts button:hover { background: #fcfbf8; }
+#parts button.on { background: var(--accent-soft); font-weight: 600; }
+#parts .dot { width: 12px; height: 12px; border-radius: 50%; }
+#parts .meta { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+#cue li.link .cue-name { color: var(--muted); }
+#cue li.link .cue-name::after { content: 'to or from start'; margin-left: 6px; font-size: 10px; color: var(--muted); background: var(--bg); padding: 1px 5px; border-radius: 4px; }
