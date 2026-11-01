@@ -192,7 +192,40 @@ window.RAA = window.RAA || {};
       }
     }
     out.reverse();
-    return out.slice(1).map(x => ({ e: x.via.inst.e, dup: x.via.inst.dup, forward: x.via.from === x.via.inst.e.a }));
+    return smoothTurns(out.slice(1).map(x => ({ e: x.via.inst.e, dup: x.via.inst.dup, forward: x.via.from === x.via.inst.e.a })));
+  }
+
+  /**
+   * Take out U-turns (running a street and straight back along it) from a closed walk.
+   * When the walk turns back at a corner it passes again later, the stretch between the
+   * two visits is a loop of its own; running that loop the other way round keeps every
+   * street and the length the same, but carries on through the corner instead of turning.
+   */
+  function smoothTurns(seq) {
+    const from = s => s.forward ? s.e.a : s.e.b;
+    const rev = s => ({ ...s, forward: !s.forward });
+    const uturn = (s, t) => !!s && !!t && s.e === t.e && s.forward !== t.forward;
+    for (let guard = 0; guard < seq.length; guard++) {
+      const visits = new Map();   // corner -> positions in the walk where it is passed through
+      for (let k = 1; k < seq.length; k++) { const v = from(seq[k]); if (!visits.has(v)) visits.set(v, []); visits.get(v).push(k); }
+      let changed = false;
+      for (let i = 1; i < seq.length && !changed; i++) {
+        if (!uturn(seq[i - 1], seq[i])) continue;
+        // reverse the loop seq[a..b-1], which starts and ends at this corner
+        for (const j of visits.get(from(seq[i]))) {
+          const [a, b] = j > i ? [i, j] : [j, i];
+          if (a === b) continue;
+          const before = uturn(seq[a - 1], seq[a]) + uturn(seq[b - 1], seq[b]);
+          const after = uturn(seq[a - 1], rev(seq[b - 1])) + uturn(rev(seq[a]), seq[b]);
+          if (after < before) {
+            seq = [...seq.slice(0, a), ...seq.slice(a, b).reverse().map(rev), ...seq.slice(b)];
+            changed = true; break;
+          }
+        }
+      }
+      if (!changed) break;
+    }
+    return seq;
   }
 
   /** Solve the Chinese Postman Problem on the active, connected part of the graph. */
@@ -342,18 +375,22 @@ window.RAA = window.RAA || {};
   }
 
   // ---------- Several runs from the same start ----------
+  const REUSE_FACTOR = 3;     // a way out or home takes a fresh street unless that is over twice as far as going back the same way
   /**
    * Cut a finished route into runs that each leave from the start and come back to it.
    * The tour is cut into stretches, and each stretch gets the shortest way out to where
    * it begins and home from where it ends (tour splitting, as in Frederickson, Hecht and
    * Kim's k-postman heuristic). Cut points are picked so the longest run is as short as
    * it can be for the number of runs.
-   * opts: {count} for a set number of runs, or {target} metres for runs of about that length.
+   * opts: {count} for a set number of runs, or {target} metres for runs of about that length;
+   * {loops: true} makes the ways out and home avoid streets the run already uses, so a run
+   * is a loop rather than out and back along the same street, at the price of a little distance.
    */
   function splitRoute(edges, includeDeadEnds, res, opts) {
     const seq = res.sequence, n = seq.length, start = res.start;
     const E = edges.filter(e => isActive(e, includeDeadEnds) && !e.isolated);
-    const { prev } = dijkstra(buildAdjacency(E), start, null);
+    const adj = buildAdjacency(E);
+    const { prev } = dijkstra(adj, start, null);
     const homeLen = new Map([[start, 0]]);
     const lenHome = node => {
       const chain = [];
@@ -402,6 +439,14 @@ window.RAA = window.RAA || {};
       for (let cur = node; cur !== start;) { const p = prev.get(cur); out.push({ e: p.edge, dup: true, link: true, forward: cur === p.edge.a }); cur = p.node; }
       return out;
     };
+    // cheapest way between two corners that stays off streets already in the run where it reasonably can
+    const pathAvoiding = (from, to, used) => {
+      if (from === to) return [];
+      const { prev: pv } = dijkstra(adj, from, new Set([to]), e => cost(e) * (used.has(e) ? REUSE_FACTOR : 1));
+      const out = [];
+      for (let cur = to; cur !== from;) { const p = pv.get(cur); out.push({ e: p.edge, dup: true, link: true, forward: p.node === p.edge.a }); cur = p.node; }
+      return out.reverse();
+    };
     const parts = [];
     for (let k = 1; k < cuts.length; k++) {
       let a = cuts[k - 1], b = cuts[k];
@@ -411,8 +456,17 @@ window.RAA = window.RAA || {};
       const body = seq.slice(a, b);
       const streetLength = body.reduce((s, x) => s + (x.dup ? 0 : x.e.len), 0);
       if (!streetLength) continue;
-      const out = pathHome(at(a)).reverse().map(s => ({ ...s, forward: !s.forward }));
-      const sequence = [...out, ...body, ...pathHome(at(b))];
+      let out, back;
+      if (opts.loops) {
+        const used = new Set(body.map(s => s.e));
+        out = pathAvoiding(start, at(a), used);
+        for (const s of out) used.add(s.e);
+        back = pathAvoiding(at(b), start, used);
+      } else {
+        out = pathHome(at(a)).reverse().map(s => ({ ...s, forward: !s.forward }));
+        back = pathHome(at(b));
+      }
+      const sequence = smoothTurns([...out, ...body, ...back]);
       const routeLength = sequence.reduce((s, x) => s + x.e.len, 0);
       parts.push({ sequence, streetLength, routeLength, extra: routeLength - streetLength, start });
     }

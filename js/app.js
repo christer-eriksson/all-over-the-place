@@ -26,7 +26,7 @@ window.RAA = window.RAA || {};
     start: null,           // {lat,lng}
     pace: '5:30',
     routeMode: 'all',      // 'all': every street, fewest repeats | 'loop': longest loop, no repeats
-    split: { mode: 'none', count: 3, target: 10 },   // 'none' | 'count': that many runs | 'target': runs of about that many km
+    split: { mode: 'none', count: 3, target: 10, loops: true },   // 'none' | 'count': that many runs | 'target': runs of about that many km
     route: null,
     parts: null,           // the route split into runs from the start, or null
     part: -1,              // the run on show, -1 for all of them
@@ -600,7 +600,7 @@ window.RAA = window.RAA || {};
     state.parts = null; state.part = -1; note.hidden = true;
     if (!res || sp.mode === 'none') return;
     const target = sp.mode === 'target' ? sp.target * 1000 : 0;
-    const { parts, shortest } = RAA.graph.splitRoute(state.graph.edges, state.includeDeadEnds, res, target ? { target } : { count: sp.count });
+    const { parts, shortest } = RAA.graph.splitRoute(state.graph.edges, state.includeDeadEnds, res, { ...(target ? { target } : { count: sp.count }), loops: sp.loops });
     const say = t => { note.textContent = t; note.hidden = false; };
     if (parts.length < 2) { say(target ? `The whole route is under ${sp.target} km, so it stays one run.` : 'The route is too short to split.'); return; }
     for (const p of parts) p.coords = RAA.graph.routeCoords(p.sequence);
@@ -836,6 +836,7 @@ window.RAA = window.RAA || {};
       state.split.mode = m;
       document.querySelectorAll('#split-mode button').forEach(b => b.classList.toggle('on', b.dataset.split === m));
       $('split-row').hidden = m === 'none';
+      $('split-loops-row').hidden = m === 'none';
       if (m === 'none') return;
       const inp = $('split-val');
       inp.step = m === 'count' ? '1' : '0.5'; inp.min = m === 'count' ? '2' : '1';
@@ -852,6 +853,9 @@ window.RAA = window.RAA || {};
       save(); resplit();
     };
     setSplit(state.split.mode);
+    const loops = $('split-loops');
+    loops.checked = state.split.loops;
+    loops.onchange = () => { state.split.loops = loops.checked; save(); resplit(); };
     const pace = $('pace');
     pace.value = state.pace;
     pace.onchange = () => { state.pace = pace.value; updateTime(); save(); };
